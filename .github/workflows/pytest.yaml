@@ -1,0 +1,119 @@
+name: Frappe CI
+
+on:
+  push:
+    branches:
+      - version-15
+  pull_request:
+
+concurrency:
+  group: version-15-frappe_vault-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  checks: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  tests:
+    name: Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+
+    services:
+      mariadb:
+        image: mariadb:10.6
+        env:
+          MARIADB_ROOT_PASSWORD: 'root'
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+
+      vault:
+        image: hashicorp/vault:latest
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: 'test-token'
+          VAULT_DEV_LISTEN_ADDRESS: '0.0.0.0:8200'
+        ports:
+          - 8200:8200
+        options: --cap-add=IPC_LOCK
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Check for valid Python & Merge Conflicts
+        run: |
+          python -m compileall -q -f "${GITHUB_WORKSPACE}"
+          if grep -lr --exclude-dir=node_modules "^<<<<<<< " "${GITHUB_WORKSPACE}"
+              then echo "Found merge conflicts"
+              exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          check-latest: true
+          cache: 'yarn'
+
+      - name: Add to Hosts
+        run: echo "127.0.0.1 test_site" | sudo tee -a /etc/hosts
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            ${{ runner.os }}-
+
+      - name: Get yarn cache directory path
+        id: yarn-cache-dir-path
+        run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
+
+      - uses: actions/cache@v4
+        id: yarn-cache
+        with:
+          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+
+      - name: Install
+        run: |
+          bash ${GITHUB_WORKSPACE}/.github/helper/install.sh
+        env:
+          VAULT_ADDR: 'http://localhost:8200'
+          VAULT_TOKEN: 'test-token'
+
+      - name: Run Tests
+        working-directory: /home/runner/frappe-bench
+        run: |
+          source env/bin/activate
+          cd apps/frappe_vault
+          poetry install
+          pytest --cov=frappe_vault --cov-report=xml --disable-warnings -s | tee pytest-coverage.txt
+        env:
+          TYPE: server
+          VAULT_ADDR: 'http://localhost:8200'
+          VAULT_TOKEN: 'test-token'
+
+      - name: Pytest coverage comment
+        uses: MishaKav/pytest-coverage-comment@main
+        with:
+          pytest-coverage-path: /home/runner/frappe-bench/apps/frappe_vault/pytest-coverage.txt
+          pytest-xml-coverage-path: /home/runner/frappe-bench/apps/frappe_vault/coverage.xml

@@ -1,7 +1,10 @@
+# Copyright (c) 2026, AgriTheory and contributors
+# For license information, please see license.txt
+
 app_name = "frappe_vault"
 app_title = "Frappe Vault"
 app_publisher = "AgriTheory"
-app_description = "Hashicorp Vault integration for Frappe"
+app_description = "OpenBao integration for Frappe"
 app_email = "support@agritheory.dev"
 app_license = "MIT"
 
@@ -10,7 +13,7 @@ app_license = "MIT"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/frappe_vault/css/frappe_vault.css"
-# app_include_js = "/assets/frappe_vault/js/frappe_vault.js"
+app_include_js = ["frappe_vault.bundle.js"]
 
 # include js, css files in header of web template
 # web_include_css = "/assets/frappe_vault/css/frappe_vault.css"
@@ -49,6 +52,14 @@ app_license = "MIT"
 # automatically create page for each record of this doctype
 # website_generators = ["Web Page"]
 
+# Website Route Rules
+# -------------------
+# Route /v1/* to the Vault API handler for Vault client compatibility
+
+website_route_rules = [
+	{"from_route": "/v1/<path:vault_path>", "to_route": "v1"},
+]
+
 # Jinja
 # ----------
 
@@ -61,7 +72,7 @@ app_license = "MIT"
 # Installation
 # ------------
 
-# before_install = "frappe_vault.install.before_install"
+before_install = "frappe_vault.install.before_install"
 # after_install = "frappe_vault.install.after_install"
 
 # Uninstallation
