@@ -3,6 +3,7 @@
 
 import os
 from typing import Any
+from urllib.parse import quote
 
 import frappe
 import requests
@@ -134,9 +135,9 @@ class VaultClient:
 		    OpenBao KV v2 path (e.g., /v1/secret/data/frappe/User/admin/password)
 		"""
 		# URL-encode components to handle special characters
-		safe_doctype = requests.utils.quote(doctype, safe="")
-		safe_name = requests.utils.quote(name, safe="")
-		safe_fieldname = requests.utils.quote(fieldname, safe="")
+		safe_doctype = quote(doctype, safe="")
+		safe_name = quote(name, safe="")
+		safe_fieldname = quote(fieldname, safe="")
 		return f"/v1/secret/data/frappe/{safe_doctype}/{safe_name}/{safe_fieldname}"
 
 	def get_secret(self, doctype: str, name: str, fieldname: str) -> str | None:

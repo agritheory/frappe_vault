@@ -8,6 +8,11 @@ on:
     branches:
       - version-15
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 env:
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
