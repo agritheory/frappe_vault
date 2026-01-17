@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v15.1.0 (2026-01-17)
+
+### Features
+
+- Add migration after install
+  ([`be3a2f8`](https://github.com/agritheory/frappe_vault/commit/be3a2f8e8849f687931a65e3cac3f5a5f2699976))
+
+- Migration commands
+  ([`86f62c5`](https://github.com/agritheory/frappe_vault/commit/86f62c5de3d0c7e8e8c17c8d1232e41d1d9e4898))
+
+
 ## v1.0.1 (2026-01-17)
 
 ### Bug Fixes
