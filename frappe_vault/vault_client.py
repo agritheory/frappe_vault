@@ -38,7 +38,6 @@ class VaultClient:
 		self,
 		url: str | None = None,
 		token: str | None = None,
-		verify_ssl: bool | None = None,
 	):
 		"""
 		Initialize OpenBao client.
@@ -46,11 +45,11 @@ class VaultClient:
 		Args:
 		    url: OpenBao server URL (defaults to site_config or BAO_ADDR/VAULT_ADDR env var)
 		    token: OpenBao token (defaults to site_config or BAO_TOKEN/VAULT_TOKEN env var)
-		    verify_ssl: Whether to verify SSL certificates (defaults to site_config)
 
 		Note:
 		    Environment variables are checked in order: BAO_* takes precedence over VAULT_*
 		    for forward compatibility, but VAULT_* is still supported for backward compatibility.
+		    OpenBao is expected to run on localhost; TLS is not used.
 		"""
 		# BAO_* env vars take precedence over VAULT_* for forward compatibility
 		default_url = (
@@ -60,9 +59,6 @@ class VaultClient:
 
 		self.url = url or frappe.conf.get("vault_url") or default_url
 		self.token = token or frappe.conf.get("vault_token") or default_token
-
-		verify_config = verify_ssl if verify_ssl is not None else frappe.conf.get("vault_verify_ssl")
-		self.verify_ssl = verify_config if verify_config is not None else True
 
 		# Remove trailing slash from URL
 		self.url = self.url.rstrip("/")
@@ -106,7 +102,6 @@ class VaultClient:
 				url=url,
 				headers=self._get_headers(),
 				json=data,
-				verify=self.verify_ssl,
 				timeout=timeout,
 			)
 		except requests.exceptions.ConnectionError as e:

@@ -15,28 +15,50 @@ This guide covers setting up OpenBao for use with Frappe Vault.
 
 ## Installation
 
-### Ubuntu/Debian
+See the [official OpenBao installation guide](https://openbao.org/docs/install) for the latest instructions.
+
+### macOS (Homebrew)
 
 ```shell
-# Add OpenBao GPG key
-wget -O- https://apt.releases.openbao.org/gpg | sudo gpg --dearmor -o /usr/share/keyrings/openbao-archive-keyring.gpg
-
-# Add repository
-echo "deb [signed-by=/usr/share/keyrings/openbao-archive-keyring.gpg] https://apt.releases.openbao.org $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/openbao.list
-
-# Install
-sudo apt update && sudo apt install openbao
+brew install openbao
 ```
 
-### macOS
+### FreeBSD
 
 ```shell
-brew install openbao/tap/openbao
+pkg install openbao
 ```
 
-### Other Platforms
+### Linux (Manual Download)
 
-See the [official OpenBao installation guide](https://openbao.org/docs/install).
+OpenBao does not yet have a Linux package repository. Download packages manually from the [GitHub releases page](https://github.com/openbao/openbao/releases):
+
+```shell
+# Example for Ubuntu/Debian (amd64)
+VERSION="2.4.4"  # Check for latest version
+wget https://github.com/openbao/openbao/releases/download/v${VERSION}/bao-hsm_${VERSION}_linux_amd64.deb
+sudo dpkg -i bao-hsm_${VERSION}_linux_amd64.deb
+```
+
+### Container Images
+
+OpenBao provides pre-built container images:
+
+```shell
+# Alpine-based (recommended)
+docker pull quay.io/openbao/openbao:latest
+# or
+docker pull ghcr.io/openbao/openbao:latest
+# or
+docker pull docker.io/openbao/openbao:latest
+
+# RHEL UBI-based
+docker pull quay.io/openbao/openbao-ubi:latest
+```
+
+### Precompiled Binaries
+
+Download the appropriate binary for your system from the [releases page](https://github.com/openbao/openbao/releases), unzip, and place the `bao` binary on your `PATH`.
 
 ## Development Setup
 

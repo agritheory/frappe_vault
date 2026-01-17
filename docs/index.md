@@ -73,8 +73,7 @@ bench --site {site} install-app frappe_vault
   "enable_vault_secrets": true,
   "enable_vault_user_passwords": true,
   "vault_url": "http://localhost:8200",
-  "vault_token": "${BAO_TOKEN}",
-  "vault_verify_ssl": false
+  "vault_token": "${BAO_TOKEN}"
 }
 ```
 
@@ -91,6 +90,6 @@ bao kv get secret/frappe/User/Administrator/password
 ## Security Considerations
 
 - **Token Security**: The OpenBao token should be provided via environment variable (`BAO_TOKEN` or `VAULT_TOKEN`) in production, not stored in site_config
-- **Network Security**: OpenBao should only be accessible from the Frappe application server (localhost or private network)
-- **TLS**: Enable `vault_verify_ssl: true` in production with proper certificates
+- **Network Security**: OpenBao should only be accessible from the Frappe application server (bind to `127.0.0.1:8200`)
+- **TLS**: External access uses Frappe's proxy API, which inherits TLS from nginx. OpenBao itself runs on localhost and does not require TLS configuration.
 - **Audit Logging**: Always enable OpenBao audit logging for compliance

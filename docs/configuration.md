@@ -21,11 +21,7 @@ Add the following keys to your site's configuration file (`/sites/{site_name}/si
 
   // OpenBao authentication token
   // RECOMMENDED: Use BAO_TOKEN or VAULT_TOKEN environment variable instead for production
-  "vault_token": "bao.xxxxxxxxxxxxx",
-
-  // Whether to verify SSL certificates when connecting to OpenBao
-  // Set to true in production with proper TLS certificates
-  "vault_verify_ssl": false
+  "vault_token": "bao.xxxxxxxxxxxxx"
 }
 ```
 
@@ -39,7 +35,6 @@ Add the following keys to your site's configuration file (`/sites/{site_name}/si
 | `enable_vault_user_passwords` | boolean | `false` | Enable OpenBao for user login passwords |
 | `vault_url` | string | `http://localhost:8200` | OpenBao server URL |
 | `vault_token` | string | - | OpenBao authentication token |
-| `vault_verify_ssl` | boolean | `true` | Verify SSL certificates |
 
 ### Proxy API Settings
 
@@ -187,39 +182,141 @@ Examples:
 - API secret: `secret/data/frappe/User/admin@example.com/api_secret`
 - Integration key: `secret/data/frappe/Integration Settings/Stripe/api_key`
 
-## Field-Level Configuration
-
-By default, when `enable_vault_secrets` is `true`, all Password fields use OpenBao storage. You can opt-out specific fields by setting `vault_enabled` to `false` on the field definition:
-
-```json
-{
-  "fieldname": "legacy_password",
-  "fieldtype": "Password",
-  "vault_enabled": false
-}
-```
-
 ## Migration
 
-When enabling OpenBao on an existing site:
+When installing Frappe Vault on an existing site with passwords, you need to migrate them to OpenBao.
 
-1. Existing passwords in the `__Auth` table will continue to work
-2. New passwords will be stored in OpenBao
-3. When a user changes their password, it moves to OpenBao
-4. The old entry is removed from `__Auth`
+### Automatic Migration
 
-To migrate all passwords at once, you can use:
+The migration runs automatically during `bench --site {site} install-app frappe_vault` if vault is enabled in `site_config.json`.
+
+### Manual Migration
+
+You can also run migration manually using bench commands:
+
+```shell
+# Check current status
+bench --site {site} vault-status
+
+# Preview what would be migrated (dry run)
+bench --site {site} migrate-passwords-to-vault --dry-run
+
+# Run the migration
+bench --site {site} migrate-passwords-to-vault
+
+# After verifying everything works, optionally clean up __Auth table
+bench --site {site} cleanup-migrated-passwords --confirm
+```
+
+### Migration Process
+
+1. **migrate-passwords-to-vault**: Copies all passwords from `__Auth` table to OpenBao
+   - Skips entries that already exist in OpenBao
+   - Does not delete from `__Auth` (safe to re-run)
+
+2. **cleanup-migrated-passwords**: Removes entries from `__Auth` that exist in OpenBao
+   - Only run after verifying the migration was successful
+   - Requires `--confirm` flag to actually delete
+
+### From bench console
 
 ```python
 # bench console
-from frappe.utils.password import update_password
-import frappe
+from frappe_vault.install import migrate_passwords_to_vault, cleanup_migrated_passwords
 
-# For each user, reset their password to move it to OpenBao
-for user in frappe.get_all("User", filters={"enabled": 1}):
-    # This requires knowing or resetting passwords
-    pass
+# Dry run first
+migrate_passwords_to_vault(dry_run=True)
+
+# Run migration
+migrate_passwords_to_vault()
+
+# Clean up (after verification)
+cleanup_migrated_passwords(confirm=True)
 ```
+
+## CLI Reference
+
+Frappe Vault provides bench commands for managing the integration.
+
+### vault-status
+
+Check OpenBao connectivity and configuration status.
+
+```shell
+bench --site {site} vault-status
+```
+
+**Output:**
+- Site configuration (`enable_vault_secrets`, `enable_vault_user_passwords`, etc.)
+- OpenBao connection status (connected/not available)
+- OpenBao health (initialized, sealed status)
+- Count of passwords remaining in `__Auth` table
+
+### migrate-passwords-to-vault
+
+Migrate existing passwords from `__Auth` table to OpenBao.
+
+```shell
+# Preview what would be migrated (recommended first step)
+bench --site {site} migrate-passwords-to-vault --dry-run
+
+# Run the actual migration (creates backup automatically)
+bench --site {site} migrate-passwords-to-vault
+
+# Skip backup if needed (not recommended)
+bench --site {site} migrate-passwords-to-vault --skip-backup
+```
+
+**Options:**
+- `--dry-run`: Show what would be migrated without making changes
+- `--skip-backup`: Skip creating a backup file (not recommended)
+
+**Behavior:**
+- Creates a SQL backup of `__Auth` table using `mysqldump` (stored in `{site}/private/backups/`)
+- Copies passwords from `__Auth` to OpenBao
+- Skips entries that already exist in OpenBao (safe to re-run)
+- Does NOT delete from `__Auth` (preserves original data)
+- Reports success/failure for each entry
+
+### restore-auth-backup
+
+Restore `__Auth` table from a SQL backup file if migration causes issues.
+
+```shell
+# List available backups
+ls sites/{site}/private/backups/__Auth_backup_*.sql
+
+# Restore from a backup
+bench --site {site} restore-auth-backup sites/{site}/private/backups/__Auth_backup_20260117_143022.sql
+
+# Or restore directly with mysql
+mysql -u root -p {db_name} < sites/{site}/private/backups/__Auth_backup_20260117_143022.sql
+```
+
+**Behavior:**
+- Uses `mysql` client to restore the SQL dump
+- Replaces existing `__Auth` table with backup contents
+- Can also be restored manually with `mysql` command
+
+### cleanup-migrated-passwords
+
+Remove passwords from `__Auth` table that have been successfully migrated to OpenBao.
+
+```shell
+# Preview what would be deleted
+bench --site {site} cleanup-migrated-passwords
+
+# Actually delete (requires --confirm flag)
+bench --site {site} cleanup-migrated-passwords --confirm
+```
+
+**Options:**
+- `--confirm`: Required to actually delete entries (safety measure)
+
+**Behavior:**
+- Only deletes entries that exist in both `__Auth` AND OpenBao
+- Keeps entries that are NOT in OpenBao (won't cause data loss)
+- Run only after verifying migration was successful
 
 ## Troubleshooting
 
@@ -247,13 +344,15 @@ print("Health:", client.check_health())
 
 ```python
 # bench console
-import frappe
-
 # Check __Auth table
-result = frappe.db.sql("""
-    SELECT doctype, name, fieldname FROM `__Auth`
-    WHERE doctype='User' AND name='Administrator'
-""", as_dict=True)
+Auth = frappe.qb.Table("__Auth")
+result = (
+    frappe.qb.from_(Auth)
+    .select(Auth.doctype, Auth.name, Auth.fieldname)
+    .where(Auth.doctype == "User")
+    .where(Auth.name == "Administrator")
+    .run(as_dict=True)
+)
 print("In __Auth:", result)
 
 # Check OpenBao

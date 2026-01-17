@@ -40,7 +40,6 @@ def vault_client():
 	return VaultClient(
 		url=os.environ.get("BAO_ADDR") or os.environ.get("VAULT_ADDR", "http://localhost:8200"),
 		token=os.environ.get("BAO_TOKEN") or os.environ.get("VAULT_TOKEN"),
-		verify_ssl=False,
 	)
 
 
@@ -214,12 +213,14 @@ def test_no_password_in_auth_table_when_openbao_enabled(vault_client, cleanup_se
 	update_password("vault-no-db-test", "my-password", "User", "password")
 
 	# Check __Auth table is empty for this user
-	result = frappe.db.sql(
-		"""
-		SELECT * FROM `__Auth`
-		WHERE doctype='User' AND name='vault-no-db-test' AND fieldname='password'
-		""",
-		as_dict=True,
+	Auth = frappe.qb.Table("__Auth")
+	result = (
+		frappe.qb.from_(Auth)
+		.select(Auth.star)
+		.where(Auth.doctype == "User")
+		.where(Auth.name == "vault-no-db-test")
+		.where(Auth.fieldname == "password")
+		.run(as_dict=True)
 	)
 
 	assert len(result) == 0, "Password should not be in __Auth table when OpenBao is enabled"

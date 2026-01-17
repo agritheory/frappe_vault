@@ -58,10 +58,14 @@ bench --site {{ site name }} add-to-hosts
 
 7. **Install and start OpenBao in dev mode**:
 ```shell
-# Install OpenBao (Ubuntu/Debian)
-wget -O- https://apt.releases.openbao.org/gpg | sudo gpg --dearmor -o /usr/share/keyrings/openbao-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/openbao-archive-keyring.gpg] https://apt.releases.openbao.org $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/openbao.list
-sudo apt update && sudo apt install openbao
+# Install OpenBao - see https://openbao.org/docs/install for options
+# macOS:
+brew install openbao
+
+# Linux (download .deb from GitHub releases):
+VERSION="2.4.4"  # Check https://github.com/openbao/openbao/releases for latest
+wget https://github.com/openbao/openbao/releases/download/v${VERSION}/bao-hsm_${VERSION}_linux_amd64.deb
+sudo dpkg -i bao-hsm_${VERSION}_linux_amd64.deb
 
 # Start OpenBao in dev mode (in a separate terminal)
 bao server -dev -dev-listen-address=127.0.0.1:8200
@@ -73,8 +77,7 @@ bao server -dev -dev-listen-address=127.0.0.1:8200
   "enable_vault_secrets": true,
   "enable_vault_user_passwords": true,
   "vault_url": "http://127.0.0.1:8200",
-  "vault_token": "bao.xxxxx",  // Use the root token from OpenBao dev output
-  "vault_verify_ssl": false
+  "vault_token": "bao.xxxxx"  // Use the root token from OpenBao dev output
 }
 ```
 
@@ -152,9 +155,13 @@ bench --site {{ site name }} console
 
 ```python
 # Check __Auth table (should be empty for Administrator)
-result = frappe.db.sql("""
-    SELECT * FROM `__Auth` WHERE name='Administrator'
-""", as_dict=True)
+Auth = frappe.qb.Table("__Auth")
+result = (
+    frappe.qb.from_(Auth)
+    .select(Auth.star)
+    .where(Auth.name == "Administrator")
+    .run(as_dict=True)
+)
 print("In __Auth:", result)  # Should be empty
 
 # Check OpenBao

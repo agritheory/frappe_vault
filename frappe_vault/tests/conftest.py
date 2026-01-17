@@ -68,7 +68,3 @@ def patch_vault_conf(monkeymodule):
 		"frappe.conf.vault_token",
 		os.environ.get("BAO_TOKEN") or os.environ.get("VAULT_TOKEN", "test-token"),
 	)
-	monkeymodule.setattr(
-		"frappe.conf.vault_verify_ssl",
-		False,
-	)

@@ -31,6 +31,8 @@ def is_field_vault_enabled(doctype: str, fieldname: str) -> bool:
 	"""
 	Check if a specific field should use Vault storage.
 
+	Returns True if vault is enabled globally and the field is a Password type.
+
 	Args:
 	    doctype: The DocType name
 	    fieldname: The field name
@@ -48,12 +50,7 @@ def is_field_vault_enabled(doctype: str, fieldname: str) -> bool:
 		if not field:
 			return False
 
-		if field.fieldtype != "Password":
-			return False
-
-		# Check for explicit vault_enabled property on field
-		# Default to True if vault is globally enabled and field is Password type
-		return getattr(field, "vault_enabled", True)
+		return field.fieldtype == "Password"
 
 	except Exception:
 		# If we can't get meta (e.g., during installation), fall back to original

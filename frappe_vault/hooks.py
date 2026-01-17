@@ -4,7 +4,7 @@
 app_name = "frappe_vault"
 app_title = "Frappe Vault"
 app_publisher = "AgriTheory"
-app_description = "OpenBao integration for Frappe"
+app_description = "OpenBao / HashiCorp Vault integration for Frappe"
 app_email = "support@agritheory.dev"
 app_license = "MIT"
 
@@ -13,7 +13,7 @@ app_license = "MIT"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/frappe_vault/css/frappe_vault.css"
-app_include_js = ["frappe_vault.bundle.js"]
+# app_include_js = "/assets/frappe_vault/js/frappe_vault.js"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/frappe_vault/css/frappe_vault.css"
@@ -73,7 +73,7 @@ website_route_rules = [
 # ------------
 
 before_install = "frappe_vault.install.before_install"
-# after_install = "frappe_vault.install.after_install"
+after_install = "frappe_vault.install.after_install"
 
 # Uninstallation
 # ------------

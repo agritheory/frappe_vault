@@ -38,8 +38,7 @@ bench --site {{ site name }} list-apps
 {
   "enable_vault_secrets": true,
   "enable_vault_user_passwords": true,
-  "vault_url": "https://localhost:8200",
-  "vault_verify_ssl": true
+  "vault_url": "http://localhost:8200"
 }
 ```
 
@@ -78,12 +77,11 @@ bench --site {{ site name }} set-admin-password {{ secure password }}
 
 ## Security Checklist
 
-- [ ] OpenBao is running with TLS enabled
-- [ ] `vault_verify_ssl` is set to `true`
+- [ ] OpenBao is bound to localhost only (`127.0.0.1:8200`)
 - [ ] OpenBao token is provided via environment variable, not site_config
 - [ ] OpenBao audit logging is enabled
 - [ ] OpenBao token has minimal required permissions (see below)
-- [ ] Network access to OpenBao is restricted to application servers only
+- [ ] External access uses Frappe proxy API (TLS via nginx)
 
 ## OpenBao Token Policy
 
@@ -149,13 +147,16 @@ bao token lookup
 Check if password exists in either location:
 ```python
 # bench console
-import frappe
 from frappe_vault.vault_client import get_vault_client
 
 # Check database
-db_result = frappe.db.sql("""
-    SELECT * FROM `__Auth` WHERE name='Administrator'
-""", as_dict=True)
+Auth = frappe.qb.Table("__Auth")
+db_result = (
+    frappe.qb.from_(Auth)
+    .select(Auth.star)
+    .where(Auth.name == "Administrator")
+    .run(as_dict=True)
+)
 print("In DB:", db_result)
 
 # Check OpenBao
