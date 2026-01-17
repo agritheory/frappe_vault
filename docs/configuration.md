@@ -43,6 +43,13 @@ Add the following keys to your site's configuration file (`/sites/{site_name}/si
 | `vault_proxy_enabled` | boolean | `false` | Enable the Vault proxy API for external access |
 | `vault_allowed_roles` | list | `["System Manager"]` | Roles allowed to use the proxy API |
 
+### Multi-Site Sync Settings
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `vault_sync_enabled` | boolean | `false` | Enable multi-site OpenBao synchronization |
+| `vault_remotes` | list | `[]` | Array of remote OpenBao server configurations |
+
 ## Environment Variables
 
 For production deployments, use environment variables instead of storing secrets in site_config:
@@ -160,6 +167,141 @@ For Frappe-native integrations, method endpoints are also available:
 - Certain sensitive OpenBao endpoints (seal, unseal, init, token create) are blocked
 - The proxy only works when `vault_proxy_enabled` is `true`
 - Users must have one of the roles in `vault_allowed_roles`
+
+## Multi-Site Sync (HA Deployments)
+
+For active-active multi-site deployments using Galera (MariaDB) and KeyDB (Redis), Frappe Vault supports bidirectional OpenBao synchronization. Each site has its own local OpenBao instance, and secrets are replicated across all sites.
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────┐
+│ Site A                                  │
+│  Frappe ──► OpenBao (local)             │
+│     │                                   │
+│     └──► RQ jobs ──► Site B OpenBao     │
+│                  └──► Site N OpenBao    │
+└─────────────────────────────────────────┘
+```
+
+- **Writes**: Synchronous to local OpenBao, async to remotes via RQ jobs
+- **Failures**: Remote write failures are retried 3 times, 60 seconds apart
+- **Reconciliation**: Hourly bidirectional sync compares all nodes
+- **Conflicts**: Last-write-wins based on KV v2 `updated_time` metadata
+
+### Configuration
+
+Add to each site's `site_config.json`:
+
+```json
+{
+  "vault_url": "http://localhost:8200",
+  "vault_token": "local-token",
+  "vault_sync_enabled": true,
+  "vault_remotes": [
+    {
+      "name": "site-b",
+      "url": "https://site-b.example.com:8200",
+      "token": "site-b-token"
+    },
+    {
+      "name": "site-c",
+      "url": "https://site-c.example.com:8200",
+      "token": "site-c-token"
+    }
+  ]
+}
+```
+
+Each site should list the OTHER sites as remotes (not itself).
+
+### Remote Configuration Options
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `name` | string | Yes | Unique identifier for this remote (for logging) |
+| `url` | string | Yes | Full URL to the remote OpenBao server |
+| `token` | string | Yes | Authentication token for the remote |
+
+### How Sync Works
+
+1. **On Write**: When a secret is written via `sync_write()`:
+   - Written synchronously to local OpenBao
+   - Background RQ job enqueued for each remote
+   - If remote is down, job retries 3x with 60s delay
+
+2. **On Delete**: Same pattern - local delete, then async remote deletes
+
+3. **Hourly Reconciliation** (runs at :39 past each hour):
+   - Lists all secrets from local and each remote
+   - Compares `updated_time` from KV v2 metadata
+   - Syncs newer secrets in both directions
+   - Logs conflicts and sync statistics
+
+### Scheduler Considerations
+
+In Frappe HA deployments, only one worker node runs the scheduler. The reconciliation job runs on whichever node has the scheduler enabled. Since KeyDB replicates the RQ job queue across sites, failed write retries will be processed regardless of which site's worker picks them up.
+
+### Using Sync-Aware Write Functions
+
+To take advantage of multi-site sync, use the sync-aware functions:
+
+```python
+from frappe_vault.vault_sync import sync_write, sync_delete
+
+# Write with automatic replication
+sync_write("User", "admin@example.com", "api_key", "secret-value")
+
+# Delete with automatic replication
+sync_delete("User", "admin@example.com", "api_key")
+```
+
+The original `VaultClient.set_secret()` and `delete_secret()` methods still work but only write to the local OpenBao instance.
+
+### Manual Reconciliation
+
+To trigger reconciliation manually:
+
+```python
+# bench console
+from frappe_vault.vault_sync import reconcile_all
+
+result = reconcile_all()
+print(result)
+# {
+#   "status": "completed",
+#   "started_at": "2026-01-17T10:39:00",
+#   "remotes": {
+#     "site-b": {"status": "completed", "pulled": 2, "pushed": 1, "skipped": 50},
+#     "site-c": {"status": "completed", "pulled": 0, "pushed": 3, "skipped": 50}
+#   },
+#   "completed_at": "2026-01-17T10:39:05"
+# }
+```
+
+### Troubleshooting Multi-Site Sync
+
+**Check sync status:**
+```python
+from frappe_vault.vault_client import is_sync_enabled, get_remote_clients
+
+print("Sync enabled:", is_sync_enabled())
+print("Remotes configured:", list(get_remote_clients().keys()))
+```
+
+**Check remote connectivity:**
+```python
+from frappe_vault.vault_client import get_remote_clients
+
+for name, client in get_remote_clients().items():
+    print(f"{name}: {'available' if client.is_available() else 'unreachable'}")
+```
+
+**Check failed jobs:**
+```shell
+# View failed RQ jobs
+bench --site {site} show-pending-jobs
+```
 
 ## API Compatibility
 

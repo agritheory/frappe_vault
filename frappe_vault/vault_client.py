@@ -238,6 +238,142 @@ class VaultClient:
 		except VaultError:
 			return False
 
+	def get_secret_metadata(self, path: str) -> dict[str, Any] | None:
+		"""
+		Get KV v2 metadata for a secret path.
+
+		Args:
+		    path: Secret path relative to the KV mount (e.g., "frappe/User/admin/password")
+
+		Returns:
+		    Metadata dict with keys like 'created_time', 'updated_time', 'current_version',
+		    'versions', etc. Returns None if the secret doesn't exist.
+
+		Raises:
+		    VaultConnectionError: If OpenBao is unreachable
+		    VaultAuthError: If authentication fails
+		    VaultError: For other OpenBao errors
+		"""
+		api_path = f"/v1/secret/metadata/{path}"
+		response = self._make_request("GET", api_path)
+
+		if response.status_code == 404:
+			return None
+
+		if response.status_code != 200:
+			raise VaultError(f"Failed to get metadata: {response.status_code} {response.text}")
+
+		return response.json().get("data", {})
+
+	def get_secret_with_metadata(self, path: str) -> dict[str, Any] | None:
+		"""
+		Get a secret along with its KV v2 metadata.
+
+		Args:
+		    path: Secret path relative to the KV mount (e.g., "frappe/User/admin/password")
+
+		Returns:
+		    Dict with 'data' (the secret data) and 'metadata' (version info, timestamps).
+		    Returns None if the secret doesn't exist.
+
+		Raises:
+		    VaultConnectionError: If OpenBao is unreachable
+		    VaultAuthError: If authentication fails
+		    VaultError: For other OpenBao errors
+		"""
+		api_path = f"/v1/secret/data/{path}"
+		response = self._make_request("GET", api_path)
+
+		if response.status_code == 404:
+			return None
+
+		if response.status_code != 200:
+			raise VaultError(f"Failed to get secret: {response.status_code} {response.text}")
+
+		return response.json().get("data", {})
+
+	def set_secret_raw(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
+		"""
+		Store a secret at a raw path (not using doctype/name/field convention).
+
+		Args:
+		    path: Secret path relative to the KV mount (e.g., "frappe/User/admin/password")
+		    data: The secret data to store (will be wrapped in {"data": ...})
+
+		Returns:
+		    Response data including version metadata
+
+		Raises:
+		    VaultConnectionError: If OpenBao is unreachable
+		    VaultAuthError: If authentication fails
+		    VaultError: For other OpenBao errors
+		"""
+		api_path = f"/v1/secret/data/{path}"
+		response = self._make_request("POST", api_path, data={"data": data})
+
+		if response.status_code not in (200, 204):
+			raise VaultError(f"Failed to set secret: {response.status_code} {response.text}")
+
+		if response.status_code == 204:
+			return {}
+		return response.json().get("data", {})
+
+	def list_secrets(self, path: str = "frappe") -> list[str]:
+		"""
+		List secrets at a given path (non-recursive).
+
+		Args:
+		    path: Path to list (default: "frappe")
+
+		Returns:
+		    List of keys at the path. Keys ending with '/' are subdirectories.
+
+		Raises:
+		    VaultConnectionError: If OpenBao is unreachable
+		    VaultAuthError: If authentication fails
+		    VaultError: For other OpenBao errors
+		"""
+		api_path = f"/v1/secret/metadata/{path}"
+		response = self._make_request("LIST", api_path)
+
+		if response.status_code == 404:
+			return []
+
+		if response.status_code != 200:
+			raise VaultError(f"Failed to list secrets: {response.status_code} {response.text}")
+
+		return response.json().get("data", {}).get("keys", [])
+
+	def list_secrets_recursive(self, path: str = "frappe") -> list[str]:
+		"""
+		Recursively list all secret paths under a given path.
+
+		Args:
+		    path: Root path to start listing from (default: "frappe")
+
+		Returns:
+		    List of full secret paths (excluding intermediate directories).
+		    E.g., ["frappe/User/admin/password", "frappe/User/admin/api_key"]
+
+		Raises:
+		    VaultConnectionError: If OpenBao is unreachable
+		    VaultAuthError: If authentication fails
+		    VaultError: For other OpenBao errors
+		"""
+		result: list[str] = []
+		keys = self.list_secrets(path)
+
+		for key in keys:
+			full_path = f"{path}/{key}".rstrip("/")
+			if key.endswith("/"):
+				# It's a directory, recurse into it
+				result.extend(self.list_secrets_recursive(full_path))
+			else:
+				# It's a secret
+				result.append(full_path)
+
+		return result
+
 
 # Module-level client instance (lazy initialization)
 _client: VaultClient | None = None
@@ -260,3 +396,50 @@ def reset_vault_client() -> None:
 	"""Reset the module-level OpenBao client (useful for testing)."""
 	global _client
 	_client = None
+
+
+def get_remote_clients() -> dict[str, VaultClient]:
+	"""
+	Get VaultClient instances for all configured remote OpenBao servers.
+
+	Remote servers are configured in site_config.json under 'vault_remotes':
+
+	    {
+	        "vault_remotes": [
+	            {"name": "site-b", "url": "https://site-b:8200", "token": "..."},
+	            {"name": "site-n", "url": "https://site-n:8200", "token": "..."}
+	        ]
+	    }
+
+	Returns:
+	    Dict mapping remote name to VaultClient instance.
+	    Empty dict if no remotes configured.
+	"""
+	remotes_config = frappe.conf.get("vault_remotes", [])
+	clients: dict[str, VaultClient] = {}
+
+	for remote in remotes_config:
+		name = remote.get("name")
+		url = remote.get("url")
+		token = remote.get("token")
+
+		if not all([name, url, token]):
+			frappe.log_error(
+				f"Invalid vault remote config: {remote}",
+				"Vault Remote Config Error",
+			)
+			continue
+
+		clients[name] = VaultClient(url=url, token=token)
+
+	return clients
+
+
+def is_sync_enabled() -> bool:
+	"""
+	Check if vault sync is enabled.
+
+	Returns:
+	    True if vault_sync_enabled is set in site_config and remotes are configured.
+	"""
+	return bool(frappe.conf.get("vault_sync_enabled", False) and frappe.conf.get("vault_remotes"))

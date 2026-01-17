@@ -137,24 +137,10 @@ after_install = "frappe_vault.install.after_install"
 
 # Scheduled Tasks
 # ---------------
+# Vault sync reconciliation runs at 39 minutes past each hour
+# This offset avoids collision with typical on-the-hour scheduled tasks
 
-# scheduler_events = {
-# 	"all": [
-# 		"frappe_vault.tasks.all"
-# 	],
-# 	"daily": [
-# 		"frappe_vault.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"frappe_vault.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"frappe_vault.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"frappe_vault.tasks.monthly"
-# 	],
-# }
+scheduler_events = {"cron": {"39 * * * *": ["frappe_vault.vault_sync.reconcile_all"]}}
 
 # Testing
 # -------
