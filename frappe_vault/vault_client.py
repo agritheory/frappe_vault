@@ -121,19 +121,26 @@ class VaultClient:
 		"""
 		Generate the OpenBao path for a secret.
 
+		Secrets are namespaced by site to support multi-tenant deployments where
+		multiple Frappe sites share the same OpenBao instance.
+
 		Args:
 		    doctype: Frappe DocType
 		    name: Document name
 		    fieldname: Field name
 
 		Returns:
-		    OpenBao KV v2 path (e.g., /v1/secret/data/frappe/User/admin/password)
+		    OpenBao KV v2 path (e.g., /v1/secret/data/frappe/mysite.example.com/User/admin/password)
 		"""
+		# Get current site for multi-tenancy support
+		site = frappe.local.site
+
 		# URL-encode components to handle special characters
+		safe_site = quote(site, safe="")
 		safe_doctype = quote(doctype, safe="")
 		safe_name = quote(name, safe="")
 		safe_fieldname = quote(fieldname, safe="")
-		return f"/v1/secret/data/frappe/{safe_doctype}/{safe_name}/{safe_fieldname}"
+		return f"/v1/secret/data/frappe/{safe_site}/{safe_doctype}/{safe_name}/{safe_fieldname}"
 
 	def get_secret(self, doctype: str, name: str, fieldname: str) -> str | None:
 		"""
