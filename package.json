@@ -1,0 +1,11 @@
+{
+  "name": "frappe_vault",
+  "version": "15.0.0",
+  "description": "OpenBao/ HashiCorp Vault integration for Frappe",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agritheory/frappe_vault.git"
+  },
+  "devDependencies": {}
+}
