@@ -141,12 +141,17 @@ def check_openbao_supervisor_config():
 
 	print(
 		"OpenBao does not appear to be configured in supervisor.\n"
-		"You will need to add an OpenBao program section to your supervisor config.\n"
-		"Example:\n"
-		"  [program:openbao]\n"
-		"  command=bao server -config=/etc/frappe/openbao/config.hcl\n"
-		"  autostart=true\n"
-		"  autorestart=true\n"
+		"You will need to set up OpenBao for this bench.\n"
+		"\n"
+		"RECOMMENDED: Use the automated setup:\n"
+		"\n"
+		"     bench generate-seal-key --init-config\n"
+		"\n"
+		"This creates OpenBao config files in your bench's config/ directory\n"
+		"and provides supervisor configuration instructions.\n"
+		"\n"
+		"With static seal configured, OpenBao will auto-unseal after bench restart.\n"
+		"See docs/openbao-setup.md for complete setup instructions.\n"
 	)
 
 	if not get_user_confirmation():

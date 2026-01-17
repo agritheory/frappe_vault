@@ -64,6 +64,20 @@ environment=BAO_TOKEN="bao.xxxxxxxxxxxxx"
 
 **Note**: Legacy `VAULT_TOKEN` environment variable is also supported for backward compatibility.
 
+If OpenBao is managed by supervisor with environment-based seal key, also configure the OpenBao program:
+```ini
+[program:openbao]
+command=/usr/bin/bao server -config=/etc/openbao/config.hcl
+autostart=true
+autorestart=true
+user=openbao
+stdout_logfile=/var/log/openbao/openbao.log
+stderr_logfile=/var/log/openbao/openbao-error.log
+environment=HOME="/etc/openbao",BAO_SEAL_KEY="<64-char-hex-key>"
+```
+
+See [OpenBao Setup Guide](./openbao-setup.md) for generating the seal key and configuration options.
+
 7. **Reload supervisor**:
 ```shell
 sudo supervisorctl reread
@@ -78,9 +92,12 @@ bench --site {{ site name }} set-admin-password {{ secure password }}
 ## Security Checklist
 
 - [ ] OpenBao is bound to localhost only (`127.0.0.1:8200`)
+- [ ] Static seal is configured for auto-unseal (see [OpenBao Setup Guide](./openbao-setup.md))
+- [ ] Seal key is protected (env var in supervisor config, or file with 0600 permissions)
 - [ ] OpenBao token is provided via environment variable, not site_config
 - [ ] OpenBao audit logging is enabled
 - [ ] OpenBao token has minimal required permissions (see below)
+- [ ] Recovery keys are stored securely offline (for emergencies only)
 - [ ] External access uses Frappe proxy API (TLS via nginx)
 
 ## OpenBao Token Policy
@@ -89,6 +106,8 @@ Create a restricted policy for the Frappe application:
 
 ```hcl
 # frappe-vault-policy.hcl
+# Secrets are namespaced by site: secret/data/frappe/{site}/{doctype}/{name}/{fieldname}
+# This policy allows access to all sites - for multi-tenant isolation, create site-specific policies
 path "secret/data/frappe/*" {
   capabilities = ["create", "read", "update", "delete"]
 }
@@ -123,8 +142,20 @@ bao audit list
 ## Backup Considerations
 
 - OpenBao data should be backed up separately from Frappe database
-- Ensure OpenBao unseal keys are securely stored
+- **Seal key**: If using file-based seal key (`file://`), include `/etc/openbao/seal.key` in backups
+- **Recovery keys**: Store recovery keys securely offline (encrypted, physically secure location)
+  - Recovery keys are for emergencies only (seal key loss, disaster recovery)
+  - With static seal, recovery keys are NOT needed for routine restarts
 - Test recovery procedures regularly
+
+### Seal Key Security Comparison
+
+| Storage Method | Backup Needed | Notes |
+|----------------|---------------|-------|
+| Environment variable (`env://`) | Supervisor config | Key in supervisor config, protect with 0600 permissions |
+| File-based (`file://`) | `/etc/openbao/seal.key` | Separate file, protect with 0600 permissions |
+
+**Important**: Anyone with access to the seal key can unseal OpenBao. Treat the seal key with the same security as the secrets it protects.
 
 ## Troubleshooting
 

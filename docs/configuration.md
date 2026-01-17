@@ -316,13 +316,17 @@ OpenBao maintains API compatibility with HashiCorp Vault OSS v1.14.x. The secret
 Secrets are stored in OpenBao's KV v2 secrets engine at the following path structure:
 
 ```
-secret/data/frappe/{doctype}/{docname}/{fieldname}
+secret/data/frappe/{site}/{doctype}/{docname}/{fieldname}
 ```
 
-Examples:
-- User password: `secret/data/frappe/User/Administrator/password`
-- API secret: `secret/data/frappe/User/admin@example.com/api_secret`
-- Integration key: `secret/data/frappe/Integration Settings/Stripe/api_key`
+Secrets are namespaced by site name to support multi-tenant deployments where multiple Frappe sites share the same OpenBao instance.
+
+Examples (for site `erp.example.com`):
+- User password: `secret/data/frappe/erp.example.com/User/Administrator/password`
+- API secret: `secret/data/frappe/erp.example.com/User/admin@example.com/api_secret`
+- Integration key: `secret/data/frappe/erp.example.com/Integration Settings/Stripe/api_key`
+
+This ensures that secrets from different sites never collide, even if they have documents with the same names.
 
 ## Migration
 
