@@ -33,11 +33,11 @@ jobs:
           - 3306:3306
         options: --health-cmd="mysqladmin ping" --health-interval=5s --health-timeout=2s --health-retries=3
 
-      vault:
-        image: hashicorp/vault:latest
+      openbao:
+        image: quay.io/openbao/openbao:latest
         env:
-          VAULT_DEV_ROOT_TOKEN_ID: 'test-token'
-          VAULT_DEV_LISTEN_ADDRESS: '0.0.0.0:8200'
+          BAO_DEV_ROOT_TOKEN_ID: 'test-token'
+          BAO_DEV_LISTEN_ADDRESS: '0.0.0.0:8200'
         ports:
           - 8200:8200
         options: --cap-add=IPC_LOCK
@@ -62,7 +62,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           check-latest: true
           cache: 'yarn'
 
@@ -97,8 +97,8 @@ jobs:
         run: |
           bash ${GITHUB_WORKSPACE}/.github/helper/install.sh
         env:
-          VAULT_ADDR: 'http://localhost:8200'
-          VAULT_TOKEN: 'test-token'
+          BAO_ADDR: 'http://localhost:8200'
+          BAO_TOKEN: 'test-token'
 
       - name: Run Tests
         working-directory: /home/runner/frappe-bench
@@ -109,8 +109,8 @@ jobs:
           pytest --cov=frappe_vault --cov-report=xml --disable-warnings -s | tee pytest-coverage.txt
         env:
           TYPE: server
-          VAULT_ADDR: 'http://localhost:8200'
-          VAULT_TOKEN: 'test-token'
+          BAO_ADDR: 'http://localhost:8200'
+          BAO_TOKEN: 'test-token'
 
       - name: Pytest coverage comment
         uses: MishaKav/pytest-coverage-comment@main
