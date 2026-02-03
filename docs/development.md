@@ -56,9 +56,8 @@ nano sites/{{ site name }}/site_config.json
 bench --site {{ site name }} add-to-hosts
 ```
 
-7. **Install and start OpenBao in dev mode**:
+7. **Install OpenBao**:
 ```shell
-# Install OpenBao - see https://openbao.org/docs/install for options
 # macOS:
 brew install openbao
 
@@ -66,29 +65,42 @@ brew install openbao
 VERSION="2.4.4"  # Check https://github.com/openbao/openbao/releases for latest
 wget https://github.com/openbao/openbao/releases/download/v${VERSION}/bao-hsm_${VERSION}_linux_amd64.deb
 sudo dpkg -i bao-hsm_${VERSION}_linux_amd64.deb
-
-# Start OpenBao in dev mode (in a separate terminal)
-bao server -dev -dev-listen-address=127.0.0.1:8200
 ```
 
-8. **Configure OpenBao settings** in `site_config.json`:
-```json
-{
-  "enable_vault_secrets": true,
-  "enable_vault_user_passwords": true,
-  "vault_url": "http://127.0.0.1:8200",
-  "vault_token": "bao.xxxxx"  // Use the root token from OpenBao dev output
-}
+8. **Set up OpenBao for development**:
+```shell
+bench setup-openbao
 ```
+
+This interactive command will:
+- Create OpenBao configuration with auto-unseal
+- Add OpenBao to your Procfile
+- Configure audit logging
 
 9. **Launch your bench**:
 ```shell
 bench start
 ```
 
+On first start, OpenBao will automatically:
+- Initialize itself
+- Save the root token to your site config
+- Enable the kv-v2 secrets engine
+- Display the recovery key (save this somewhere safe)
+
 10. **Set the admin password** (will be stored in OpenBao):
 ```shell
 bench --site {{ site name }} set-admin-password admin
+```
+
+### Resetting OpenBao (if needed)
+
+If you need to start fresh with OpenBao:
+```shell
+# Stop bench first, then:
+bench remove-openbao --confirm
+bench setup-openbao
+bench start
 ```
 
 ## Development Tools
@@ -111,15 +123,15 @@ poetry install
 pytest frappe_vault/tests/ -v
 ```
 
-### Enable OpenBao audit logging (for debugging)
+### Viewing OpenBao audit logs
+
+Audit logging is automatically enabled when using `bench setup-openbao`. View the logs:
 ```shell
-export BAO_ADDR="http://127.0.0.1:8200"
-export BAO_TOKEN="bao.xxxxx"
+# Watch the audit log (each line is JSON)
+tail -f logs/openbao-audit.log | jq .
 
-bao audit enable file file_path=/tmp/openbao-audit.log
-
-# Watch the audit log
-tail -f /tmp/openbao-audit.log | jq .
+# Or search for specific operations
+grep "secret/data" logs/openbao-audit.log | jq .
 ```
 
 ## Testing the Integration

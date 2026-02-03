@@ -62,17 +62,48 @@ Download the appropriate binary for your system from the [releases page](https:/
 
 ## Development Setup
 
-For development, run OpenBao in dev mode:
+For development, use the automated setup command:
+
+```shell
+bench setup-openbao
+```
+
+This interactive command will:
+1. Create OpenBao configuration with static seal (auto-unseal on restart)
+2. Add `bench run-openbao` to your Procfile
+3. Configure audit logging
+
+Then start your bench:
+```shell
+bench start
+```
+
+On first start, OpenBao will automatically:
+- Initialize itself
+- Save the root token to your site config(s)
+- Enable the kv-v2 secrets engine
+- Display the recovery key (save this somewhere safe)
+
+**No manual configuration required!** The token is automatically saved to both `common_site_config.json` and any site-specific configs.
+
+### Resetting OpenBao
+
+To start fresh (deletes all secrets):
+```shell
+bench remove-openbao --confirm
+bench setup-openbao
+bench start
+```
+
+### Legacy Dev Mode
+
+You can still run OpenBao in dev mode for quick testing, but data is lost on restart:
 
 ```shell
 bao server -dev -dev-listen-address=127.0.0.1:8200
 ```
 
-This will output:
-- **Unseal Key**: Used to unseal OpenBao (not needed in dev mode)
-- **Root Token**: Use this as your `BAO_TOKEN`
-
-**Warning**: Dev mode is insecure and should never be used in production. All data is stored in memory and lost on restart.
+This outputs a root token to use in your site config. **Warning**: Dev mode should never be used in production.
 
 ## Production Setup
 
@@ -80,18 +111,19 @@ OpenBao v2.4+ supports **static seal auto-unseal**, which allows OpenBao to auto
 
 ### Quick Setup (Recommended)
 
-The easiest way to set up OpenBao is to use the Frappe Vault CLI, which creates all configuration files in your bench's `config/` directory:
+The easiest way to set up OpenBao for production is to use the Frappe Vault CLI:
 
 ```shell
-bench generate-seal-key --init-config
+bench setup-openbao --production
 ```
 
 This creates:
-- `config/openbao.hcl` - OpenBao configuration file
+- `config/openbao.hcl` - OpenBao configuration file with auto-unseal and audit logging
 - `config/openbao-seal.key` - Static seal key for auto-unseal
 - `config/openbao-data/` - Data storage directory
+- `/etc/supervisor/conf.d/openbao.conf` - Supervisor configuration (if permissions allow)
 
-The command outputs the supervisor configuration to add. See the command output for next steps.
+The command outputs the next steps for initialization. After starting OpenBao via supervisor, you'll need to initialize it once and enable the secrets engine.
 
 ### Manual Setup
 
@@ -102,12 +134,11 @@ If you prefer to configure OpenBao manually or need a system-wide installation:
 Generate a 32-byte (256-bit) seal key:
 
 ```shell
-# Option 1: Using the CLI (shows configuration options)
-bench generate-seal-key
-
-# Option 2: Using openssl directly
+# Generate a 64-character hex key (32 bytes)
 openssl rand -hex 32
 ```
+
+Alternatively, `bench setup-openbao --manual` will generate config files without configuring a process manager.
 
 #### 2. Choose Configuration Location
 
@@ -134,6 +165,9 @@ Example for bench config directory (`~/frappe-bench/config/openbao.hcl`):
 ```hcl
 ui = true
 
+log_level = "info"
+log_format = "standard"
+
 storage "file" {
   path = "/home/frappe/frappe-bench/config/openbao-data"
 }
@@ -147,6 +181,12 @@ listener "tcp" {
 seal "static" {
   current_key_id = "frappe-vault-1"
   current_key = "file:///home/frappe/frappe-bench/config/openbao-seal.key"
+}
+
+# Audit logging - all requests/responses are logged
+audit_device "file" {
+  path      = "file"
+  file_path = "/home/frappe/frappe-bench/logs/openbao-audit.log"
 }
 
 api_addr = "http://127.0.0.1:8200"
@@ -267,15 +307,19 @@ bao policy write frappe-vault frappe-vault-policy.hcl
 bao token create -policy=frappe-vault -period=768h -display-name="frappe-app"
 ```
 
-### 9. Enable Audit Logging
+### 9. Audit Logging
 
-```shell
-# File-based audit log
-bao audit enable file file_path=/var/log/openbao/audit.log
+When using `bench setup-openbao`, audit logging is automatically configured in the HCL config file. Logs are written to `logs/openbao-audit.log` in your bench directory.
 
-# Or syslog
-bao audit enable syslog tag="openbao" facility="AUTH"
+For manual setups, add the audit device to your `openbao.hcl`:
+```hcl
+audit_device "file" {
+  path      = "file"
+  file_path = "/var/log/openbao/audit.log"
+}
 ```
+
+**Note**: OpenBao 2.4+ requires audit devices to be configured declaratively in the config file, not via the API.
 
 ## Supervisor Integration
 
