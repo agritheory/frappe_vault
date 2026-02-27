@@ -1,0 +1,84 @@
+name: Tests
+
+on:
+  push:
+    branches: [ version-15 ]
+  pull_request:
+
+jobs:
+  test:
+    name: Frappe Vault
+    runs-on: ubuntu-latest
+
+    services:
+      mariadb:
+        image: mariadb:10.6
+        env:
+          MYSQL_ROOT_PASSWORD: 'root'
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+
+      openbao:
+        image: openbao/openbao:latest
+        env:
+          SKIP_SETCAP: 'true'
+          BAO_DEV_ROOT_TOKEN_ID: 'test-token'
+          BAO_DEV_LISTEN_ADDRESS: '0.0.0.0:8200'
+        ports:
+          - 8200:8200
+        options: >-
+          --health-cmd="wget -q http://localhost:8200/v1/sys/health -O /dev/null || exit 1"
+          --health-interval=5s
+          --health-timeout=2s
+          --health-retries=10
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          check-latest: true
+          cache: 'yarn'
+
+      - name: Add to Hosts
+        run: echo "127.0.0.1 test_site" | sudo tee -a /etc/hosts
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            ${{ runner.os }}-
+
+      - name: Install Bench Site and Apps
+        run: bash ${{ github.workspace }}/.github/helper/install.sh
+
+      - name: Run Tests
+        working-directory: /home/runner/frappe-bench
+        env:
+          BAO_ADDR: 'http://localhost:8200'
+          BAO_TOKEN: 'test-token'
+        run: |
+          set -o pipefail
+          source env/bin/activate
+          bench execute frappe_vault.tests.setup.before_test
+          cd apps/frappe_vault
+          python -m playwright install --with-deps chromium
+          pytest -n auto --dist=loadfile --browser chromium --disable-warnings | tee pytest-output.txt
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-traces
+          path: /home/runner/frappe-bench/apps/frappe_vault/test-results/

@@ -4,26 +4,16 @@
 """
 Integration tests that run against a real OpenBao instance.
 
-These tests require OpenBao to be running (e.g., via the CI service container
-or locally with `bao server -dev`).
-
-Environment variables expected:
-- BAO_ADDR or VAULT_ADDR: OpenBao server URL (default: http://localhost:8200)
-- BAO_TOKEN or VAULT_TOKEN: OpenBao authentication token
+Requires OpenBao to be running. URL and token are read from (in priority order):
+  1. BAO_ADDR / BAO_TOKEN environment variables
+  2. VAULT_ADDR / VAULT_TOKEN environment variables
+  3. vault_url / vault_token in site_config / common_site_config.json
 """
-
-import os
 
 import frappe
 import pytest
 
-from frappe_vault.vault_client import VaultClient, VaultError, get_vault_client, reset_vault_client
-
-# Skip all tests in this module if OpenBao is not available
-pytestmark = pytest.mark.skipif(
-	not (os.environ.get("BAO_TOKEN") or os.environ.get("VAULT_TOKEN")),
-	reason="BAO_TOKEN/VAULT_TOKEN not set - OpenBao integration tests require a running OpenBao instance",
-)
+from frappe_vault.vault_client import VaultClient, VaultError, reset_vault_client
 
 
 @pytest.fixture(autouse=True)
@@ -36,11 +26,8 @@ def reset_client():
 
 @pytest.fixture
 def vault_client():
-	"""Get an OpenBao client configured from environment."""
-	return VaultClient(
-		url=os.environ.get("BAO_ADDR") or os.environ.get("VAULT_ADDR", "http://localhost:8200"),
-		token=os.environ.get("BAO_TOKEN") or os.environ.get("VAULT_TOKEN"),
-	)
+	"""Get an OpenBao client using site config (env vars override if set)."""
+	return VaultClient()
 
 
 @pytest.fixture

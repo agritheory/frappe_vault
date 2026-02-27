@@ -6,7 +6,6 @@ Tests for the Vault proxy API.
 """
 
 import json
-import os
 from unittest.mock import MagicMock, call, patch
 
 import frappe
@@ -37,16 +36,13 @@ def guest_user(monkeypatch):
 @pytest.fixture
 def proxy_enabled(monkeypatch):
 	"""Enable the vault proxy."""
-	monkeypatch.setattr(
-		"frappe.conf.get",
-		lambda key, default=None: True if key == "vault_proxy_enabled" else default,
-	)
+	monkeypatch.setitem(frappe.conf, "vault_proxy_enabled", True)
 
 
 @pytest.fixture
 def proxy_disabled(monkeypatch):
 	"""Disable the vault proxy."""
-	monkeypatch.setattr("frappe.conf.get", lambda key, default=None: default)
+	monkeypatch.setitem(frappe.conf, "vault_proxy_enabled", False)
 
 
 @pytest.fixture
@@ -77,10 +73,7 @@ def test_default_allowed_roles(proxy_disabled):
 
 def test_custom_allowed_roles(monkeypatch):
 	custom_roles = ["System Manager", "Vault Admin"]
-	monkeypatch.setattr(
-		"frappe.conf.get",
-		lambda key, default=None: custom_roles if key == "vault_allowed_roles" else default,
-	)
+	monkeypatch.setitem(frappe.conf, "vault_allowed_roles", custom_roles)
 	assert vault_proxy.get_vault_allowed_roles() == custom_roles
 
 
@@ -348,10 +341,6 @@ def test_delete_secret_logs_correct_user(proxy_enabled, vault_user, mock_activit
 	assert mock_activity_log[0]["user"] == vault_user
 
 
-@pytest.mark.skipif(
-	not (os.environ.get("BAO_TOKEN") or os.environ.get("VAULT_TOKEN")),
-	reason="BAO_TOKEN/VAULT_TOKEN not set - skipping integration tests",
-)
 def test_health_integration(proxy_enabled, vault_user, mock_activity_log):
 	"""Health check should work against real OpenBao."""
 	result = vault_proxy.health()
@@ -359,10 +348,6 @@ def test_health_integration(proxy_enabled, vault_user, mock_activity_log):
 	assert "initialized" in result["data"] or "reachable" in result["data"]
 
 
-@pytest.mark.skipif(
-	not (os.environ.get("BAO_TOKEN") or os.environ.get("VAULT_TOKEN")),
-	reason="BAO_TOKEN/VAULT_TOKEN not set - skipping integration tests",
-)
 def test_list_secrets_integration(proxy_enabled, vault_user, mock_activity_log):
 	"""List secrets should work against real OpenBao."""
 	result = vault_proxy.list_secrets("frappe")
@@ -370,114 +355,78 @@ def test_list_secrets_integration(proxy_enabled, vault_user, mock_activity_log):
 	assert "keys" in result["data"] or result["data"] == {"keys": []}
 
 
-# Tests for the /v1/* API-compatible route handler
-from frappe_vault.www import v1 as v1_handler
+# ---------------------------------------------------------------------------
+# Tests for VaultApiRenderer (the /v1/* page renderer)
+# ---------------------------------------------------------------------------
+
+from frappe_vault.vault_api_renderer import VaultApiRenderer
 
 
 @pytest.fixture
-def mock_request(monkeypatch):
-	"""Mock frappe.request for route handler tests."""
+def mock_get_request(monkeypatch):
+	"""Attach a minimal mock GET request to frappe.local."""
 
 	class MockRequest:
 		method = "GET"
-		data = None
+		content_type = "application/json"
 
-	mock_req = MockRequest()
-	monkeypatch.setattr("frappe.request", mock_req)
-	return mock_req
+		def get_data(self, as_text=False):
+			return ""
 
-
-@pytest.fixture
-def mock_response(monkeypatch):
-	"""Mock frappe.response for route handler tests."""
-	response = {}
-	monkeypatch.setattr("frappe.response", response)
-	return response
+	req = MockRequest()
+	frappe.local.request = req
+	return req
 
 
-@pytest.fixture
-def mock_form_dict(monkeypatch):
-	"""Mock frappe.form_dict for route parameters."""
-	form_dict = {}
-	monkeypatch.setattr("frappe.form_dict", form_dict)
-	return form_dict
+def render(path):
+	"""Helper: instantiate VaultApiRenderer and call render()."""
+	return VaultApiRenderer(path).render()
 
 
-def test_v1_route_requires_proxy_enabled(
-	proxy_disabled, vault_user, mock_request, mock_response, mock_form_dict, mock_activity_log
-):
-	"""V1 route should return 503 when proxy is disabled."""
-	mock_form_dict["vault_path"] = "sys/health"
-
-	v1_handler.get_context({})
-
-	assert mock_response.get("http_status_code") == 503
-	assert "not enabled" in str(mock_response.get("message"))
+def test_renderer_requires_proxy_enabled(proxy_disabled, vault_user, mock_get_request):
+	"""Renderer returns 403 when vault proxy is disabled."""
+	resp = render("v1/sys/health")
+	assert resp.status_code == 403
+	assert "not enabled" in resp.get_data(as_text=True)
 
 
-def test_v1_route_requires_auth(
-	proxy_enabled, mock_request, mock_response, mock_form_dict, monkeypatch
-):
-	"""V1 route should return 401 for guest users."""
+def test_renderer_requires_auth(proxy_enabled, mock_get_request, monkeypatch):
+	"""Renderer returns 401 for guest users."""
 	monkeypatch.setattr("frappe.session.user", "Guest")
-	mock_form_dict["vault_path"] = "sys/health"
-
-	v1_handler.get_context({})
-
-	assert mock_response.get("http_status_code") == 401
+	resp = render("v1/sys/health")
+	assert resp.status_code == 401
 
 
-def test_v1_route_requires_permission(
-	proxy_enabled, guest_user, mock_request, mock_response, mock_form_dict, mock_activity_log
+def test_renderer_requires_permission(
+	proxy_enabled, guest_user, mock_get_request, mock_activity_log
 ):
-	"""V1 route should return 403 for users without permission."""
-	mock_form_dict["vault_path"] = "sys/health"
-
-	v1_handler.get_context({})
-
-	assert mock_response.get("http_status_code") == 403
+	"""Renderer returns 403 for users without an allowed role."""
+	resp = render("v1/sys/health")
+	assert resp.status_code == 403
 
 
-def test_v1_route_blocks_seal(
-	proxy_enabled, vault_user, mock_request, mock_response, mock_form_dict, mock_activity_log
+def test_renderer_blocks_seal(proxy_enabled, vault_user, mock_get_request, mock_activity_log):
+	resp = render("v1/sys/seal")
+	assert resp.status_code == 403
+	assert "not allowed" in resp.get_data(as_text=True)
+
+
+def test_renderer_blocks_unseal(proxy_enabled, vault_user, mock_get_request, mock_activity_log):
+	resp = render("v1/sys/unseal")
+	assert resp.status_code == 403
+
+
+def test_renderer_blocks_token_create(
+	proxy_enabled, vault_user, mock_get_request, mock_activity_log
 ):
-	"""V1 route should block seal endpoint."""
-	mock_form_dict["vault_path"] = "sys/seal"
-
-	v1_handler.get_context({})
-
-	assert mock_response.get("http_status_code") == 403
-	assert "not allowed" in str(mock_response.get("message"))
+	resp = render("v1/auth/token/create")
+	assert resp.status_code == 403
 
 
-def test_v1_route_blocks_unseal(
-	proxy_enabled, vault_user, mock_request, mock_response, mock_form_dict, mock_activity_log
+def test_renderer_forwards_get_request(
+	proxy_enabled, vault_user, mock_get_request, mock_activity_log
 ):
-	"""V1 route should block unseal endpoint."""
-	mock_form_dict["vault_path"] = "sys/unseal"
-
-	v1_handler.get_context({})
-
-	assert mock_response.get("http_status_code") == 403
-
-
-def test_v1_route_blocks_token_create(
-	proxy_enabled, vault_user, mock_request, mock_response, mock_form_dict, mock_activity_log
-):
-	"""V1 route should block token create endpoint."""
-	mock_form_dict["vault_path"] = "auth/token/create"
-
-	v1_handler.get_context({})
-
-	assert mock_response.get("http_status_code") == 403
-
-
-def test_v1_route_forwards_request(
-	proxy_enabled, vault_user, mock_request, mock_response, mock_form_dict, mock_activity_log
-):
-	"""V1 route should forward valid requests to OpenBao."""
-	mock_form_dict["vault_path"] = "sys/health"
-
+	"""Renderer proxies valid GET requests to OpenBao and mirrors the response."""
 	mock_vault_response = MagicMock()
 	mock_vault_response.status_code = 200
 	mock_vault_response.json.return_value = {"initialized": True, "sealed": False}
@@ -485,20 +434,18 @@ def test_v1_route_forwards_request(
 	mock_client = MagicMock()
 	mock_client._make_request.return_value = mock_vault_response
 
-	with patch("frappe_vault.www.v1.get_vault_client", return_value=mock_client):
-		v1_handler.get_context({})
+	with patch("frappe_vault.vault_api_renderer.get_vault_client", return_value=mock_client):
+		resp = render("v1/sys/health")
 
-	assert mock_response.get("http_status_code") == 200
-	assert mock_response.get("message") == {"initialized": True, "sealed": False}
+	assert resp.status_code == 200
+	assert json.loads(resp.data) == {"initialized": True, "sealed": False}
 	mock_client._make_request.assert_called_once_with("GET", "/v1/sys/health", data=None)
 
 
-def test_v1_route_logs_correct_user(
-	proxy_enabled, vault_user, mock_request, mock_response, mock_form_dict, mock_activity_log
+def test_renderer_logs_correct_user(
+	proxy_enabled, vault_user, mock_get_request, mock_activity_log
 ):
-	"""V1 route should log the correct Frappe user."""
-	mock_form_dict["vault_path"] = "sys/health"
-
+	"""Renderer records the authenticated Frappe user in the audit log."""
 	mock_vault_response = MagicMock()
 	mock_vault_response.status_code = 200
 	mock_vault_response.json.return_value = {"initialized": True}
@@ -506,20 +453,24 @@ def test_v1_route_logs_correct_user(
 	mock_client = MagicMock()
 	mock_client._make_request.return_value = mock_vault_response
 
-	with patch("frappe_vault.www.v1.get_vault_client", return_value=mock_client):
-		v1_handler.get_context({})
+	with patch("frappe_vault.vault_api_renderer.get_vault_client", return_value=mock_client):
+		render("v1/sys/health")
 
 	assert len(mock_activity_log) == 1
 	assert mock_activity_log[0]["user"] == vault_user
 
 
-def test_v1_route_handles_post_data(
-	proxy_enabled, vault_user, mock_request, mock_response, mock_form_dict, mock_activity_log
-):
-	"""V1 route should forward POST data."""
-	mock_request.method = "POST"
-	mock_request.data = b'{"data": {"key": "value"}}'
-	mock_form_dict["vault_path"] = "secret/data/myapp/config"
+def test_renderer_forwards_post_data(proxy_enabled, vault_user, mock_activity_log, monkeypatch):
+	"""Renderer parses the JSON request body and forwards it to OpenBao."""
+
+	class MockPostRequest:
+		method = "POST"
+		content_type = "application/json"
+
+		def get_data(self, as_text=False):
+			return '{"data": {"key": "value"}}'
+
+	frappe.local.request = MockPostRequest()
 
 	mock_vault_response = MagicMock()
 	mock_vault_response.status_code = 200
@@ -528,10 +479,10 @@ def test_v1_route_handles_post_data(
 	mock_client = MagicMock()
 	mock_client._make_request.return_value = mock_vault_response
 
-	with patch("frappe_vault.www.v1.get_vault_client", return_value=mock_client):
-		v1_handler.get_context({})
+	with patch("frappe_vault.vault_api_renderer.get_vault_client", return_value=mock_client):
+		resp = render("v1/secret/data/myapp/config")
 
-	assert mock_response.get("http_status_code") == 200
+	assert resp.status_code == 200
 	call_args = mock_client._make_request.call_args
 	assert call_args[0][0] == "POST"
 	assert call_args[0][1] == "/v1/secret/data/myapp/config"

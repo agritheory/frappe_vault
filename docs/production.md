@@ -3,6 +3,11 @@ For license information, please see license.txt-->
 
 # Frappe Vault Production Setup
 
+<div class="byline">
+  Tyler Matteson 2026-01-17
+</div>
+
+
 Before you begin, ensure your server meets the following requirements:
 - Python 3.10+ for Frappe version 15
 - OpenBao installed and configured (see [OpenBao Setup Guide](./openbao-setup.md))
@@ -33,58 +38,56 @@ bench --site {{ site name }} install-app frappe_vault
 bench --site {{ site name }} list-apps
 ```
 
-5. **Configure OpenBao settings** in `site_config.json`:
-```json
-{
-  "enable_vault_secrets": true,
-  "enable_vault_user_passwords": true,
-  "vault_url": "http://localhost:8200"
-}
+5. **Set up OpenBao for production**:
+```shell
+bench setup-openbao --production
 ```
 
-6. **Configure supervisor** with OpenBao token environment variable:
+This creates:
+- OpenBao configuration with auto-unseal and audit logging
+- Supervisor configuration for OpenBao (outputs to console if `/etc/supervisor/conf.d/` isn't writable)
 
-Edit your supervisor configuration (usually `/etc/supervisor/conf.d/frappe-bench.conf`):
-```ini
-[program:frappe-bench-frappe-web]
-environment=BAO_TOKEN="bao.xxxxxxxxxxxxx"
-
-[program:frappe-bench-frappe-worker-default]
-environment=BAO_TOKEN="bao.xxxxxxxxxxxxx"
-
-[program:frappe-bench-frappe-worker-short]
-environment=BAO_TOKEN="bao.xxxxxxxxxxxxx"
-
-[program:frappe-bench-frappe-worker-long]
-environment=BAO_TOKEN="bao.xxxxxxxxxxxxx"
-
-[program:frappe-bench-frappe-schedule]
-environment=BAO_TOKEN="bao.xxxxxxxxxxxxx"
-```
-
-**Note**: Legacy `VAULT_TOKEN` environment variable is also supported for backward compatibility.
-
-If OpenBao is managed by supervisor with environment-based seal key, also configure the OpenBao program:
-```ini
-[program:openbao]
-command=/usr/bin/bao server -config=/etc/openbao/config.hcl
-autostart=true
-autorestart=true
-user=openbao
-stdout_logfile=/var/log/openbao/openbao.log
-stderr_logfile=/var/log/openbao/openbao-error.log
-environment=HOME="/etc/openbao",BAO_SEAL_KEY="<64-char-hex-key>"
-```
-
-See [OpenBao Setup Guide](./openbao-setup.md) for generating the seal key and configuration options.
-
-7. **Reload supervisor**:
+6. **Reload supervisor and start OpenBao**:
 ```shell
 sudo supervisorctl reread
 sudo supervisorctl update
 ```
 
-8. **Set the admin password**:
+7. **Initialize OpenBao** (first time only):
+```shell
+export BAO_ADDR='http://127.0.0.1:8200'
+bao operator init -recovery-shares=1 -recovery-threshold=1
+```
+
+**Save the recovery key and root token securely!**
+
+8. **Enable the secrets engine**:
+```shell
+export BAO_TOKEN='<root-token-from-init>'
+bao secrets enable -path=secret kv-v2
+```
+
+9. **Configure the Frappe token** in `site_config.json`:
+```json
+{
+  "enable_vault_secrets": true,
+  "enable_vault_user_passwords": true,
+  "vault_url": "http://127.0.0.1:8200",
+  "vault_token": "<root-token-or-policy-token>"
+}
+```
+
+For better security, create a restricted policy token instead of using the root token. See [OpenBao Token Policy](#openbao-token-policy) below.
+
+Alternatively, configure supervisor with the token as an environment variable:
+```ini
+[program:frappe-bench-frappe-web]
+environment=BAO_TOKEN="bao.xxxxxxxxxxxxx"
+```
+
+See [OpenBao Setup Guide](./openbao-setup.md) for more configuration options.
+
+10. **Set the admin password**:
 ```shell
 bench --site {{ site name }} set-admin-password {{ secure password }}
 ```

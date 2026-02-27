@@ -57,9 +57,9 @@ Frappe Vault supports two types of password storage:
 | Encrypted Passwords | `enable_vault_secrets` | API keys, secrets, retrievable passwords |
 | User Login Passwords | `enable_vault_user_passwords` | User authentication (hashed) |
 
-## Quick Start
+## Quick Start (Development)
 
-1. **Install OpenBao** (see [OpenBao Setup Guide](./openbao-setup.md))
+1. **Install OpenBao** (see [OpenBao Setup Guide](./openbao-setup.md) for installation options)
 
 2. **Install the app**:
 ```shell
@@ -67,25 +67,27 @@ bench get-app frappe_vault https://github.com/agritheory/frappe_vault.git
 bench --site {site} install-app frappe_vault
 ```
 
-3. **Configure site_config.json**:
-```json
-{
-  "enable_vault_secrets": true,
-  "enable_vault_user_passwords": true,
-  "vault_url": "http://localhost:8200",
-  "vault_token": "${BAO_TOKEN}"
-}
+3. **Set up OpenBao** (automatic configuration):
+```shell
+bench setup-openbao
 ```
 
-4. **Set admin password** (will be stored in OpenBao):
+4. **Start your bench** (OpenBao auto-initializes on first run):
+```shell
+bench start
+```
+
+5. **Set admin password** (will be stored in OpenBao):
 ```shell
 bench --site {site} set-admin-password {password}
 ```
 
-5. **Verify** by checking the OpenBao audit log or querying OpenBao directly:
-```shell
-bao kv get secret/frappe/User/Administrator/password
-```
+That's it! The `bench setup-openbao` command handles all configuration automatically:
+- Creates OpenBao config with auto-unseal
+- Adds OpenBao to your Procfile
+- On first `bench start`, initializes OpenBao and saves the token to your site config
+
+For production setup, see the [Production Environment Setup](./production.md) guide.
 
 ## Security Considerations
 

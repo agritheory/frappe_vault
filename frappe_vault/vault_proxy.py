@@ -24,6 +24,23 @@ def is_vault_proxy_enabled() -> bool:
 	return bool(frappe.conf.get("vault_proxy_enabled", False))
 
 
+def is_vault_secrets_api_enabled() -> bool:
+	"""Check if the Vault Secrets doctype UI and API are enabled.
+
+	When this is not set (the default), the vault operates purely as a local
+	secret store for internal Frappe use — password fields, monkey-patched auth,
+	etc. No access to the Vault Secret doctype or its CRUD API is permitted,
+	even for Administrator.
+
+	Set ``vault_secrets_api_enabled: true`` (canonical) or the legacy key
+	``enable_vault_secrets: true`` in ``site_config.json`` to allow users with
+	appropriate roles to manage secrets through the desk UI and API.
+	"""
+	return bool(
+		frappe.conf.get("vault_secrets_api_enabled") or frappe.conf.get("enable_vault_secrets")
+	)
+
+
 def get_vault_allowed_roles() -> list[str]:
 	"""Get the list of roles allowed to access Vault proxy."""
 	default_roles = ["System Manager"]
@@ -255,16 +272,49 @@ def proxy_request(path: str, method: str = "GET", data: str | None = None) -> di
 		return {"success": False, "error": str(e)}
 
 
+def prevent_tag_delete_if_used_on_secret(doc, method=None):
+	"""Block deletion of a Frappe Tag that is applied to any Vault Secret.
+
+	Registered as a ``before_delete`` doc_event for the ``Tag`` doctype in
+	hooks.py. Frappe stores document tags in ``tabDocument User Tag``; we
+	query that table to detect usage before allowing the delete.
+	"""
+	count = frappe.db.count("Document User Tag", {"tag": doc.name, "document_type": "Vault Secret"})
+	if count:
+		frappe.throw(
+			frappe._("Cannot delete tag '{0}' — it is used on {1} Vault Secret(s).").format(
+				doc.name, count
+			),
+			frappe.ValidationError,
+		)
+
+
+@frappe.whitelist()
+def reset_list_user_settings(doctype: str) -> None:
+	"""Replace (not merge) the list-view user settings for *doctype* with an empty object.
+
+	Frappe's built-in ``frappe.model.utils.user_settings.save`` always *merges*
+	the supplied dict into the existing cached settings, so passing ``{}`` is a
+	no-op.  Calling ``update_user_settings`` with ``for_update=True`` bypasses
+	the merge and does a direct replacement, which is what the test fixtures need
+	to guarantee a clean filter state before each test.
+	"""
+	from frappe.model.utils.user_settings import update_user_settings
+
+	update_user_settings(doctype, "{}", for_update=True)
+
+
 @frappe.whitelist(allow_guest=True)
 def status() -> dict[str, Any]:
 	"""
-	Check if Vault proxy is enabled and available (no auth required).
+	Check Vault feature flags and availability (no auth required).
 
 	Returns:
-	    dict: Proxy status information
+	    dict: Status including proxy and secrets API enabled flags
 	"""
 	proxy_enabled = is_vault_proxy_enabled()
 	return {
 		"proxy_enabled": proxy_enabled,
+		"secrets_api_enabled": is_vault_secrets_api_enabled(),
 		"vault_available": get_vault_client().is_available() if proxy_enabled else None,
 	}
