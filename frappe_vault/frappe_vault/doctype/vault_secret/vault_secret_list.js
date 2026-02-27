@@ -3,31 +3,34 @@
 
 frappe.listview_settings['Vault Secret'] = {
 	onload(listview) {
-		frappe.call({
-			method: 'frappe_vault.vault_proxy.status',
-			callback({ message }) {
-				if (!message?.secrets_api_enabled) {
-					// Remove the "Add Vault Secret" header button
-					listview.can_create = false
-					listview.set_primary_action()
+		// Kick off the status check early using xcall (returns a native Promise so
+		// the refresh hook can await it with .then()).  frappe.call returns a jQuery
+		// Deferred which is not reliably thenable in this context.
+		listview._vault_status = frappe.xcall('frappe_vault.vault_proxy.status')
+	},
 
-					// Replace the empty-state function and unconditionally update the DOM.
-					// toggle_result_area() only calls .toggle() — it never re-renders content —
-					// so we must set the HTML now regardless of current visibility.  If the
-					// no-result div is already shown the user sees it immediately; if it is
-					// still hidden the custom content is in place before toggle() shows it.
-					listview.get_no_result_message = () => `
-					<div class="msg-box no-border">
-						<div>
-							<img src="/assets/frappe/images/ui-states/list-empty-state.svg"
-								alt="Vault Secrets disabled" class="null-state">
-						</div>
-						<p>${__('Secrets UI must be enabled in the site config.')}</p>
-					</div>`
+	refresh(listview) {
+		// refresh fires AFTER toggle_result_area() — .no-result is already shown or
+		// hidden based on the record count at this point.  We resolve the status
+		// promise here so that .html() always targets a visible element, eliminating
+		// the race between the XHR response and the DOM visibility state.
+		if (!listview._vault_status) return
+		listview._vault_status.then(status => {
+			if (status?.secrets_api_enabled) return
 
-					listview.$no_result?.html(listview.get_no_result_message())
-				}
-			},
+			listview.can_create = false
+			listview.set_primary_action()
+
+			listview.get_no_result_message = () => `
+				<div class="msg-box no-border">
+					<div>
+						<img src="/assets/frappe/images/ui-states/list-empty-state.svg"
+							alt="Vault Secrets disabled" class="null-state">
+					</div>
+					<p>${__('Secrets UI must be enabled in the site config.')}</p>
+				</div>`
+
+			listview.$no_result?.html(listview.get_no_result_message())
 		})
 	},
 }

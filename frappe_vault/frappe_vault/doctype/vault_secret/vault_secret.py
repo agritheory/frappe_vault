@@ -7,7 +7,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from frappe_vault.vault_client import VaultClient, VaultError, get_vault_client
+from frappe_vault.vault_client import VaultError, get_vault_client
 from frappe_vault.vault_proxy import is_vault_secrets_api_enabled, log_vault_access
 
 
@@ -20,13 +20,10 @@ class VaultSecret(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		from frappe_vault.frappe_vault.doctype.vault_secret_item.vault_secret_item import VaultSecretItem
-
 		description: DF.SmallText | None
 		folder: DF.Data | None
-		items: DF.Table[VaultSecretItem]
 		path: DF.Data
-		secret_type: DF.Literal["Single Value", "Key-Value Pairs"]
+		secret_value: DF.Password | None
 		title: DF.Data
 	# end: auto-generated types
 
@@ -51,17 +48,13 @@ class VaultSecret(Document):
 
 	def on_update(self):
 		"""Write secret value to OpenBao."""
-		# For Single Value secrets, check if password field has a value
-		if self.secret_type == "Single Value":
-			# Get the password value using frappe's get_password
-			password_value = self.get_password("secret_value", raise_exception=False)
-			if password_value:
-				self._write_to_vault(password_value)
+		if self.flags.get("secret_value") is not None:
+			self._write_to_vault(self.flags.secret_value)
+			return
 
-		# For Key-Value Pairs, check if values provided via flags
-		secret_value = self.flags.get("secret_value")
-		if secret_value is not None:
-			self._write_to_vault(secret_value)
+		password_value = self.get_password("secret_value", raise_exception=False)
+		if password_value:
+			self._write_to_vault(password_value)
 
 	def on_trash(self):
 		"""Delete secret from OpenBao when document is deleted."""
@@ -76,39 +69,19 @@ class VaultSecret(Document):
 			# Don't block deletion if vault is unavailable
 			frappe.log_error(f"Failed to delete secret from OpenBao: {e}", "Vault Secret Deletion")
 
-	def _write_to_vault(self, value):
-		"""Write secret value to OpenBao.
-
-		Args:
-		    value: For single value secrets, a string.
-		           For key-value secrets, a dict mapping keys to values.
-		"""
+	def _write_to_vault(self, value: str) -> None:
+		"""Write secret value to OpenBao."""
 		try:
 			client = get_vault_client()
 			vault_path = f"frappe/{frappe.local.site}/{self.path}"
-
-			if self.secret_type == "Single Value":
-				data = {"value": value}
-			else:
-				# Key-value pairs - value should be a dict
-				data = value if isinstance(value, dict) else {"value": value}
-
-			client.set_secret_raw(vault_path, data)
+			client.set_secret_raw(vault_path, {"value": value})
 			log_vault_access("write_secret", self.path, True)
 		except VaultError as e:
 			log_vault_access("write_secret", self.path, False, str(e))
 			frappe.throw(_("Failed to write secret to OpenBao: {0}").format(str(e)))
 
-	def get_secret_value(self, key: str | None = None) -> str | dict | None:
-		"""Retrieve secret value from OpenBao.
-
-		Args:
-		    key: For key-value secrets, the specific key to retrieve.
-		         If None, returns all values.
-
-		Returns:
-		    The secret value, or None if not found.
-		"""
+	def get_secret_value(self) -> str | None:
+		"""Retrieve secret value from OpenBao."""
 		try:
 			client = get_vault_client()
 			vault_path = f"frappe/{frappe.local.site}/{self.path}"
@@ -117,14 +90,7 @@ class VaultSecret(Document):
 			if not result:
 				return None
 
-			data = result.get("data", {})
-
-			if self.secret_type == "Single Value":
-				return data.get("value")
-			elif key:
-				return data.get(key)
-			else:
-				return data
+			return result.get("data", {}).get("value")
 
 		except VaultError as e:
 			frappe.log_error(f"Failed to retrieve secret from OpenBao: {e}", "Vault Secret Retrieval")

@@ -277,7 +277,7 @@ def reconcile_with_remote(
 	Returns:
 	    Dict with sync statistics (pulled, pushed, skipped, errors)
 	"""
-	stats = {
+	stats: dict[str, Any] = {
 		"status": "completed",
 		"pulled": 0,  # Secrets copied from remote to local
 		"pushed": 0,  # Secrets copied from local to remote

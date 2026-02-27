@@ -66,12 +66,18 @@ def test_list_disabled_shows_message_when_api_off(page):
 	original = config.get("vault_secrets_api_enabled")
 
 	try:
+		# Land on the list first so reload() stays on the right page
+		_navigate_to_list(page)
+
 		config["vault_secrets_api_enabled"] = False
 		config_path.write_text(json.dumps(config, indent=1))
 
-		_navigate_to_list(page)
+		# Hard reload — the server picks up the new config on every fresh request,
+		# so the page initialises with secrets_api_enabled=false from the start.
+		page.reload()
+		page.wait_for_selector(".list-row, .no-result", timeout=10000)
 
-		# Our custom empty-state message must be visible (set by the onload callback)
+		# Our custom empty-state message must be visible (set by the refresh hook)
 		expect(page.get_by_text("Secrets UI must be enabled in the site config.")).to_be_visible(
 			timeout=8000
 		)
