@@ -72,7 +72,7 @@ def create_vault_secrets():
 			"path": "apps/myapp/sendgrid",
 			"description": "SendGrid API key for email delivery",
 			"tags": ["production", "api-key", "smtp"],
-			"value": "SG.FAKE_1234567890abcdefghijklmnopqrstuvwxyz.ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
+			"value": "SG.FAKE_1234567890abcdefghijklmnopqrstuvwxyz.FAKE_ABCDEFGHIJKLMNOPQRSTUVWXYZ",
 		},
 		{
 			"title": "MyApp Stripe Credentials",

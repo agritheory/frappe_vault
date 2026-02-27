@@ -289,21 +289,6 @@ def prevent_tag_delete_if_used_on_secret(doc, method=None):
 		)
 
 
-@frappe.whitelist()
-def reset_list_user_settings(doctype: str) -> None:
-	"""Replace (not merge) the list-view user settings for *doctype* with an empty object.
-
-	Frappe's built-in ``frappe.model.utils.user_settings.save`` always *merges*
-	the supplied dict into the existing cached settings, so passing ``{}`` is a
-	no-op.  Calling ``update_user_settings`` with ``for_update=True`` bypasses
-	the merge and does a direct replacement, which is what the test fixtures need
-	to guarantee a clean filter state before each test.
-	"""
-	from frappe.model.utils.user_settings import update_user_settings
-
-	update_user_settings(doctype, "{}", for_update=True)
-
-
 @frappe.whitelist(allow_guest=True)
 def status() -> dict[str, Any]:
 	"""
