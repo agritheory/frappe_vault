@@ -1,6 +1,6 @@
 [project]
 name = "frappe_vault"
-version = "15.0.0"
+version = "15.2.0"
 authors = [
     { name = "AgriTheory", email = "support@agritheory.dev"}
 ]
