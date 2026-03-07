@@ -5,6 +5,19 @@ For license information, please see license.txt-->
 
 <!-- version list -->
 
+## v15.3.1 (2026-03-07)
+
+### Bug Fixes
+
+- More robust installer
+  ([`48870b9`](https://github.com/agritheory/frappe_vault/commit/48870b94176dcb13c919c9791edb0da88d9a58a3))
+
+### Chores
+
+- Refactor imports
+  ([`2485e22`](https://github.com/agritheory/frappe_vault/commit/2485e22d6f12f7783c6d7eda3d1fb5b392e00cf1))
+
+
 ## v15.3.0 (2026-03-07)
 
 ### Features

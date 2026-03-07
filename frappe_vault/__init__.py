@@ -1,7 +1,7 @@
 # Copyright (c) 2025, AgriTheory and contributors
 # For license information, please see license.txt
 
-__version__ = "15.3.0"
+__version__ = "15.3.1"
 
 import frappe
 import frappe.utils.password
