@@ -1,0 +1,26 @@
+{% extends "templates/web.html" %}
+
+{% block head_include %}
+{{ include_style('login.bundle.css') }}
+{% endblock %}
+
+{% block page_content %}
+<div>
+	<section class="for-login">
+		<div class="page-card-head">
+			<img class="app-logo" src="{{ logo }}">
+			<h4>{{ _("Authentication Unavailable") }}</h4>
+		</div>
+		<div class="login-content page-card">
+			<div class="page-card-body text-center">
+				<p class="text-muted mb-4">
+					{{ _("The authentication service is temporarily unavailable. Please contact your system administrator.") }}
+				</p>
+				<a href="/login" class="btn btn-sm btn-primary">
+					{{ _("Try Again") }}
+				</a>
+			</div>
+		</div>
+	</section>
+</div>
+{% endblock %}

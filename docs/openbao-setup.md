@@ -3,6 +3,11 @@ For license information, please see license.txt-->
 
 # OpenBao Setup Guide
 
+<div class="byline">
+  Tyler Matteson 2026-01-17
+</div>
+
+
 This guide covers setting up OpenBao for use with Frappe Vault.
 
 ## What is OpenBao?
@@ -62,72 +67,150 @@ Download the appropriate binary for your system from the [releases page](https:/
 
 ## Development Setup
 
-For development, run OpenBao in dev mode:
+For development, use the automated setup command:
+
+```shell
+bench setup-openbao
+```
+
+This interactive command will:
+1. Create OpenBao configuration with static seal (auto-unseal on restart)
+2. Add `bench run-openbao` to your Procfile
+3. Configure audit logging
+
+Then start your bench:
+```shell
+bench start
+```
+
+On first start, OpenBao will automatically:
+- Initialize itself
+- Save the root token to your site config(s)
+- Enable the kv-v2 secrets engine
+- Display the recovery key (save this somewhere safe)
+
+**No manual configuration required!** The token is automatically saved to both `common_site_config.json` and any site-specific configs.
+
+### Resetting OpenBao
+
+To start fresh (deletes all secrets):
+```shell
+bench remove-openbao --confirm
+bench setup-openbao
+bench start
+```
+
+### Legacy Dev Mode
+
+You can still run OpenBao in dev mode for quick testing, but data is lost on restart:
 
 ```shell
 bao server -dev -dev-listen-address=127.0.0.1:8200
 ```
 
-This will output:
-- **Unseal Key**: Used to unseal OpenBao (not needed in dev mode)
-- **Root Token**: Use this as your `BAO_TOKEN`
-
-**Warning**: Dev mode is insecure and should never be used in production. All data is stored in memory and lost on restart.
+This outputs a root token to use in your site config. **Warning**: Dev mode should never be used in production.
 
 ## Production Setup
 
-### 1. Create Configuration File
+OpenBao v2.4+ supports **static seal auto-unseal**, which allows OpenBao to automatically unseal on startup using a symmetric AES-256 key. This is the recommended configuration for Frappe deployments managed by Supervisor, as it ensures OpenBao remains available after `bench restart`.
 
-Create `/etc/openbao/config.hcl`:
+### Quick Setup (Recommended)
+
+The easiest way to set up OpenBao for production is to use the Frappe Vault CLI:
+
+```shell
+bench setup-openbao --production
+```
+
+This creates:
+- `config/openbao.hcl` - OpenBao configuration file with auto-unseal and audit logging
+- `config/openbao-seal.key` - Static seal key for auto-unseal
+- `config/openbao-data/` - Data storage directory
+- `/etc/supervisor/conf.d/openbao.conf` - Supervisor configuration (if permissions allow)
+
+The command outputs the next steps for initialization. After starting OpenBao via supervisor, you'll need to initialize it once and enable the secrets engine.
+
+### Manual Setup
+
+If you prefer to configure OpenBao manually or need a system-wide installation:
+
+#### 1. Generate Seal Key
+
+Generate a 32-byte (256-bit) seal key:
+
+```shell
+# Generate a 64-character hex key (32 bytes)
+openssl rand -hex 32
+```
+
+Alternatively, `bench setup-openbao --manual` will generate config files without configuring a process manager.
+
+#### 2. Choose Configuration Location
+
+**Option A: Bench Config Directory (Recommended)**
+
+Store OpenBao config alongside your bench. No sudo required.
+
+- Config: `~/frappe-bench/config/openbao.hcl`
+- Seal key: `~/frappe-bench/config/openbao-seal.key`
+- Data: `~/frappe-bench/config/openbao-data/`
+
+**Option B: System Directory**
+
+Traditional system-wide installation requiring root access.
+
+- Config: `/etc/openbao/config.hcl`
+- Seal key: `/etc/openbao/seal.key`
+- Data: `/opt/openbao/data/`
+
+#### 3. Create Configuration File
+
+Example for bench config directory (`~/frappe-bench/config/openbao.hcl`):
 
 ```hcl
 ui = true
 
+log_level = "info"
+log_format = "standard"
+
 storage "file" {
-  path = "/opt/openbao/data"
+  path = "/home/frappe/frappe-bench/config/openbao-data"
 }
 
 listener "tcp" {
   address     = "127.0.0.1:8200"
-  tls_disable = false
-  tls_cert_file = "/etc/openbao/tls/openbao.crt"
-  tls_key_file  = "/etc/openbao/tls/openbao.key"
+  tls_disable = true  # TLS handled by nginx reverse proxy
 }
 
-api_addr = "https://127.0.0.1:8200"
-cluster_addr = "https://127.0.0.1:8201"
+# Static seal for auto-unseal on restart
+seal "static" {
+  current_key_id = "frappe-vault-1"
+  current_key = "file:///home/frappe/frappe-bench/config/openbao-seal.key"
+}
+
+# Audit logging - all requests/responses are logged
+audit_device "file" {
+  path      = "file"
+  file_path = "/home/frappe/frappe-bench/logs/openbao-audit.log"
+}
+
+api_addr = "http://127.0.0.1:8200"
 ```
 
-### 2. Create Data Directory
+Create the seal key file:
+```shell
+# Replace with your generated key
+echo "YOUR_64_CHAR_HEX_KEY_HERE" > ~/frappe-bench/config/openbao-seal.key
+chmod 600 ~/frappe-bench/config/openbao-seal.key
+```
+
+#### 4. Create Data Directory
 
 ```shell
-sudo mkdir -p /opt/openbao/data
-sudo chown openbao:openbao /opt/openbao/data
+mkdir -p ~/frappe-bench/config/openbao-data
 ```
 
-### 3. Configure TLS Certificates
-
-Generate or obtain TLS certificates and place them in `/etc/openbao/tls/`.
-
-For self-signed certificates (development only):
-```shell
-sudo mkdir -p /etc/openbao/tls
-cd /etc/openbao/tls
-
-# Generate CA
-openssl genrsa -out ca.key 4096
-openssl req -new -x509 -days 365 -key ca.key -out ca.crt -subj "/CN=OpenBao CA"
-
-# Generate server certificate
-openssl genrsa -out openbao.key 4096
-openssl req -new -key openbao.key -out openbao.csr -subj "/CN=localhost"
-openssl x509 -req -days 365 -in openbao.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out openbao.crt
-
-sudo chown openbao:openbao /etc/openbao/tls/*
-sudo chmod 600 /etc/openbao/tls/openbao.key
-```
-
-### 4. Create Systemd Service
+### 5. Create Systemd Service (for systemd deployments)
 
 Create `/etc/systemd/system/openbao.service`:
 
@@ -158,12 +241,14 @@ RestartSec=5
 TimeoutStopSec=30
 LimitNOFILE=65536
 LimitMEMLOCK=infinity
+# For env-based seal key (Option A with systemd):
+# Environment=BAO_SEAL_KEY=YOUR_64_CHAR_HEX_KEY_HERE
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### 5. Start and Initialize OpenBao
+### 6. Start and Initialize OpenBao
 
 ```shell
 # Start OpenBao
@@ -171,19 +256,20 @@ sudo systemctl enable openbao
 sudo systemctl start openbao
 
 # Set environment
-export BAO_ADDR='https://127.0.0.1:8200'
-export BAO_CACERT='/etc/openbao/tls/ca.crt'
+export BAO_ADDR='http://127.0.0.1:8200'
 
 # Initialize OpenBao (only once)
-bao operator init -key-shares=5 -key-threshold=3
+# With static seal, this generates recovery keys instead of unseal keys
+bao operator init -recovery-shares=5 -recovery-threshold=3
 
-# IMPORTANT: Save the unseal keys and root token securely!
-
-# Unseal OpenBao (required after every restart)
-bao operator unseal  # Run 3 times with different keys
+# IMPORTANT: Save the recovery keys and root token securely!
+# Recovery keys are for emergency access, not routine restarts.
+# OpenBao will auto-unseal using the static seal key.
 ```
 
-### 6. Enable KV Secrets Engine
+**Note**: With static seal configured, OpenBao automatically unseals on startup. The recovery keys are only needed for emergency situations (e.g., seal key rotation, disaster recovery).
+
+### 7. Enable KV Secrets Engine
 
 ```shell
 export BAO_TOKEN='bao.xxxxx'  # Root token from init
@@ -192,16 +278,30 @@ export BAO_TOKEN='bao.xxxxx'  # Root token from init
 bao secrets enable -path=secret kv-v2
 ```
 
-### 7. Create Frappe Policy
+### 8. Create Frappe Policy
 
 Create `frappe-vault-policy.hcl`:
 ```hcl
-# Allow full access to frappe secrets
+# Allow full access to frappe secrets for all sites
+# Secrets are stored at: secret/data/frappe/{site}/{doctype}/{name}/{fieldname}
+# Example: secret/data/frappe/mysite.example.com/User/Administrator/password
 path "secret/data/frappe/*" {
   capabilities = ["create", "read", "update", "delete"]
 }
 
 path "secret/metadata/frappe/*" {
+  capabilities = ["list", "delete"]
+}
+```
+
+For multi-tenant deployments, you can create site-specific policies:
+```hcl
+# Policy for site1.example.com only
+path "secret/data/frappe/site1.example.com/*" {
+  capabilities = ["create", "read", "update", "delete"]
+}
+
+path "secret/metadata/frappe/site1.example.com/*" {
   capabilities = ["list", "delete"]
 }
 ```
@@ -212,22 +312,38 @@ bao policy write frappe-vault frappe-vault-policy.hcl
 bao token create -policy=frappe-vault -period=768h -display-name="frappe-app"
 ```
 
-### 8. Enable Audit Logging
+### 9. Audit Logging
 
-```shell
-# File-based audit log
-bao audit enable file file_path=/var/log/openbao/audit.log
+When using `bench setup-openbao`, audit logging is automatically configured in the HCL config file. Logs are written to `logs/openbao-audit.log` in your bench directory.
 
-# Or syslog
-bao audit enable syslog tag="openbao" facility="AUTH"
+For manual setups, add the audit device to your `openbao.hcl`:
+```hcl
+audit_device "file" {
+  path      = "file"
+  file_path = "/var/log/openbao/audit.log"
+}
 ```
+
+**Note**: OpenBao 2.4+ requires audit devices to be configured declaratively in the config file, not via the API.
 
 ## Supervisor Integration
 
-For Frappe deployments using Supervisor, add OpenBao as a managed service.
+For Frappe deployments using Supervisor (recommended), add OpenBao as a managed service.
 
 Create `/etc/supervisor/conf.d/openbao.conf`:
 
+**For bench config directory setup (recommended):**
+```ini
+[program:openbao]
+command=/usr/bin/bao server -config=/home/frappe/frappe-bench/config/openbao.hcl
+autostart=true
+autorestart=true
+directory=/home/frappe/frappe-bench
+stdout_logfile=/var/log/openbao/openbao.log
+stderr_logfile=/var/log/openbao/openbao-error.log
+```
+
+**For system directory setup with env-based seal key:**
 ```ini
 [program:openbao]
 command=/usr/bin/bao server -config=/etc/openbao/config.hcl
@@ -236,18 +352,119 @@ autorestart=true
 user=openbao
 stdout_logfile=/var/log/openbao/openbao.log
 stderr_logfile=/var/log/openbao/openbao-error.log
-environment=HOME="/etc/openbao"
+environment=HOME="/etc/openbao",BAO_SEAL_KEY="YOUR_64_CHAR_HEX_KEY_HERE"
 ```
 
-**Note**: You'll still need to manually unseal OpenBao after a restart, or implement auto-unseal using a cloud KMS.
+With static seal configured:
+- `bench restart` will restart OpenBao and it will **automatically unseal**
+- No manual intervention required after restarts
+- Recovery keys are only needed for emergencies
 
-## Auto-Unseal (Optional)
+Create log directory and reload supervisor:
+```shell
+sudo mkdir -p /var/log/openbao
+sudo supervisorctl reread
+sudo supervisorctl update
+```
 
-For production environments, consider using auto-unseal with a cloud KMS:
+## Seal Key Storage
 
-- [AWS KMS](https://openbao.org/docs/configuration/seal/awskms)
-- [GCP Cloud KMS](https://openbao.org/docs/configuration/seal/gcpckms)
-- [Azure Key Vault](https://openbao.org/docs/configuration/seal/azurekeyvault)
+Choose the storage method that best fits your security requirements:
+
+### Environment Variable (`env://`)
+
+```hcl
+seal "static" {
+  current_key_id = "frappe-vault-1"
+  current_key = "env://BAO_SEAL_KEY"
+}
+```
+
+**Pros:**
+- Key not persisted as a separate file on disk
+- Integrates well with container orchestration (K8s Secrets, Docker Secrets)
+- Easy to manage with Supervisor
+
+**Cons:**
+- Visible to root via `/proc/<pid>/environ`
+- Supervisor config file must be protected (0600 permissions)
+
+### File-Based (`file://`)
+
+```hcl
+seal "static" {
+  current_key_id = "frappe-vault-1"
+  current_key = "file:///etc/openbao/seal.key"
+}
+```
+
+**Pros:**
+- Simpler setup for traditional deployments
+- Easier to audit file access
+- Works without modifying supervisor config
+
+**Cons:**
+- Key persists on disk (must secure with permissions)
+- Must ensure file permissions are correct (0600, owned by openbao)
+
+### Security Notes
+
+Both methods require trusting the host system. Anyone with root access to the host can access the seal key. For high-security environments, consider:
+
+- [AWS KMS auto-unseal](https://openbao.org/docs/configuration/seal/awskms)
+- [GCP Cloud KMS auto-unseal](https://openbao.org/docs/configuration/seal/gcpckms)
+- [Azure Key Vault auto-unseal](https://openbao.org/docs/configuration/seal/azurekeyvault)
+
+## Seal Key Rotation
+
+To rotate the seal key:
+
+1. Generate a new key: `openssl rand -hex 32`
+2. Update config with both keys:
+
+```hcl
+seal "static" {
+  current_key_id = "frappe-vault-2"
+  current_key = "env://BAO_SEAL_KEY"
+  previous_key_id = "frappe-vault-1"
+  previous_key = "env://BAO_SEAL_KEY_OLD"
+}
+```
+
+3. Update environment with both keys
+4. Restart OpenBao - it will re-wrap data with the new key
+5. After confirming success, remove `previous_key` entries
+
+## Alternative: Manual Unsealing (Shamir)
+
+If you prefer manual unsealing with Shamir secret sharing (not recommended for Supervisor deployments), omit the `seal "static"` block from your configuration:
+
+```hcl
+ui = true
+
+storage "file" {
+  path = "/opt/openbao/data"
+}
+
+listener "tcp" {
+  address     = "127.0.0.1:8200"
+  tls_disable = true
+}
+
+api_addr = "http://127.0.0.1:8200"
+```
+
+Initialize with unseal keys:
+```shell
+bao operator init -key-shares=5 -key-threshold=3
+```
+
+After every restart, you must manually unseal:
+```shell
+bao operator unseal  # Run 3 times with different keys
+```
+
+**Warning**: With Shamir unsealing, `bench restart` will leave OpenBao sealed until manually unsealed. This breaks automated deployments and requires human intervention.
 
 ## Health Checks
 
@@ -272,9 +489,32 @@ curl -s https://localhost:8200/v1/sys/health | jq .
 
 ## Troubleshooting
 
-### OpenBao is Sealed
+### OpenBao is Sealed After Restart
 
-After a restart, OpenBao must be unsealed:
+If OpenBao is sealed after restart with static seal configured:
+
+1. **Check seal key availability**:
+   - For `env://`: Verify `BAO_SEAL_KEY` is set in supervisor/systemd config
+   - For `file://`: Verify the key file exists and has correct permissions
+
+2. **Check OpenBao logs**:
+   ```shell
+   sudo journalctl -u openbao -f
+   # Or for supervisor:
+   tail -f /var/log/openbao/openbao-error.log
+   ```
+
+3. **Verify key format**: The key must be exactly 64 hex characters (32 bytes)
+
+4. **Emergency unseal with recovery keys** (if static seal fails):
+   ```shell
+   bao operator unseal -recovery
+   # Enter recovery key (repeat as needed based on threshold)
+   ```
+
+### OpenBao is Sealed (Manual Shamir Setup)
+
+If using manual Shamir unsealing (not recommended):
 ```shell
 bao operator unseal
 # Enter unseal key (repeat 3 times with different keys)
@@ -285,11 +525,13 @@ bao operator unseal
 Check OpenBao is running:
 ```shell
 sudo systemctl status openbao
+# Or for supervisor:
+sudo supervisorctl status openbao
 ```
 
 ### Certificate Errors
 
-For self-signed certificates, set:
+If using TLS (not via nginx proxy):
 ```shell
 export BAO_SKIP_VERIFY=true
 # Or
@@ -301,6 +543,17 @@ export BAO_CACERT=/path/to/ca.crt
 Verify token has correct policy:
 ```shell
 bao token lookup
+```
+
+### Seal Key File Permissions
+
+If using file-based seal key:
+```shell
+ls -la /etc/openbao/seal.key
+# Should show: -rw------- 1 openbao openbao
+# Fix if needed:
+sudo chmod 600 /etc/openbao/seal.key
+sudo chown openbao:openbao /etc/openbao/seal.key
 ```
 
 ## Migration from HashiCorp Vault

@@ -194,3 +194,4 @@ cypress/videos
 
 # JetBrains IDEs
 .idea/
+.aider*

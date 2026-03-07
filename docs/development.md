@@ -3,6 +3,11 @@ For license information, please see license.txt-->
 
 # Frappe Vault Developer Setup
 
+<div class="byline">
+  Tyler Matteson 2026-01-17
+</div>
+
+
 Before you begin, make sure that your Python version is 3.10 or later for Frappe version 15.
 
 ## Prerequisites
@@ -56,9 +61,8 @@ nano sites/{{ site name }}/site_config.json
 bench --site {{ site name }} add-to-hosts
 ```
 
-7. **Install and start OpenBao in dev mode**:
+7. **Install OpenBao**:
 ```shell
-# Install OpenBao - see https://openbao.org/docs/install for options
 # macOS:
 brew install openbao
 
@@ -66,29 +70,42 @@ brew install openbao
 VERSION="2.4.4"  # Check https://github.com/openbao/openbao/releases for latest
 wget https://github.com/openbao/openbao/releases/download/v${VERSION}/bao-hsm_${VERSION}_linux_amd64.deb
 sudo dpkg -i bao-hsm_${VERSION}_linux_amd64.deb
-
-# Start OpenBao in dev mode (in a separate terminal)
-bao server -dev -dev-listen-address=127.0.0.1:8200
 ```
 
-8. **Configure OpenBao settings** in `site_config.json`:
-```json
-{
-  "enable_vault_secrets": true,
-  "enable_vault_user_passwords": true,
-  "vault_url": "http://127.0.0.1:8200",
-  "vault_token": "bao.xxxxx"  // Use the root token from OpenBao dev output
-}
+8. **Set up OpenBao for development**:
+```shell
+bench setup-openbao
 ```
+
+This interactive command will:
+- Create OpenBao configuration with auto-unseal
+- Add OpenBao to your Procfile
+- Configure audit logging
 
 9. **Launch your bench**:
 ```shell
 bench start
 ```
 
+On first start, OpenBao will automatically:
+- Initialize itself
+- Save the root token to your site config
+- Enable the kv-v2 secrets engine
+- Display the recovery key (save this somewhere safe)
+
 10. **Set the admin password** (will be stored in OpenBao):
 ```shell
 bench --site {{ site name }} set-admin-password admin
+```
+
+### Resetting OpenBao (if needed)
+
+If you need to start fresh with OpenBao:
+```shell
+# Stop bench first, then:
+bench remove-openbao --confirm
+bench setup-openbao
+bench start
 ```
 
 ## Development Tools
@@ -111,15 +128,15 @@ poetry install
 pytest frappe_vault/tests/ -v
 ```
 
-### Enable OpenBao audit logging (for debugging)
+### Viewing OpenBao audit logs
+
+Audit logging is automatically enabled when using `bench setup-openbao`. View the logs:
 ```shell
-export BAO_ADDR="http://127.0.0.1:8200"
-export BAO_TOKEN="bao.xxxxx"
+# Watch the audit log (each line is JSON)
+tail -f logs/openbao-audit.log | jq .
 
-bao audit enable file file_path=/tmp/openbao-audit.log
-
-# Watch the audit log
-tail -f /tmp/openbao-audit.log | jq .
+# Or search for specific operations
+grep "secret/data" logs/openbao-audit.log | jq .
 ```
 
 ## Testing the Integration
@@ -263,9 +280,9 @@ for log in logs:
     print(f"{log.creation} - {log.user}: {log.subject}")
 ```
 
-### Test 7: Permission Checks
+### Test 7: Proxy API Permission Checks
 
-Test that non-privileged users can't access the proxy:
+Test that users without a `vault_allowed_roles` role cannot use the generic proxy:
 
 ```python
 # bench console
@@ -283,7 +300,7 @@ if not frappe.db.exists("User", "testuser@example.com"):
 # Switch to that user
 frappe.set_user("testuser@example.com")
 
-# This should fail with PermissionError
+# This should fail with PermissionError (no vault_allowed_roles role)
 from frappe_vault import vault_proxy
 try:
     vault_proxy.health()
@@ -293,4 +310,42 @@ except frappe.PermissionError:
 
 # Switch back
 frappe.set_user("Administrator")
+```
+
+### Test 8: Vault Secrets API and Folder Permissions
+
+Test the Vault Secrets CRUD API and folder-based sharing (requires `vault_secrets_api_enabled: true`):
+
+```python
+# bench console
+from frappe_vault.frappe_vault import create_secret, get_secret, reveal_secret, share_folder, delete_secret
+
+# Create a secret (folder chain is auto-created)
+result = create_secret(
+    title="Stripe Key",
+    path="apps/myapp/stripe_key",
+    value="sk_live_example",
+    description="Production Stripe secret key",
+)
+print("Created:", result["name"])  # → "apps/myapp/stripe_key"
+
+# Read metadata (no value returned)
+meta = get_secret("apps/myapp/stripe_key")
+print("Permissions:", meta["permissions"])  # → {"read": True, "write": True, "share": True}
+
+# Reveal the actual value (requires read permission + OpenBao access)
+data = reveal_secret("apps/myapp/stripe_key")
+print("Value:", data["value"])
+
+# Share the folder with a developer
+share_folder("apps/myapp", "developer@example.com", read=1, write=0, share=0)
+
+# Verify the developer can now read secrets inside that folder
+frappe.set_user("developer@example.com")
+meta = get_secret("apps/myapp/stripe_key")
+print("Developer permissions:", meta["permissions"])  # → {"read": True, "write": False, "share": False}
+frappe.set_user("Administrator")
+
+# Clean up
+delete_secret("apps/myapp/stripe_key")
 ```
