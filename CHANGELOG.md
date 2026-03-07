@@ -5,6 +5,14 @@ For license information, please see license.txt-->
 
 <!-- version list -->
 
+## v15.3.0 (2026-03-07)
+
+### Features
+
+- Add setup-openbao command
+  ([`91612b3`](https://github.com/agritheory/frappe_vault/commit/91612b3103bb616b82dcf08cc45a25295e811820))
+
+
 ## v15.2.0 (2026-03-07)
 
 
