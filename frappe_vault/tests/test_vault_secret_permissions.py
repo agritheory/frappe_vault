@@ -395,9 +395,9 @@ def test_get_folders_blocked_when_api_disabled(monkeypatch):
 		"frappe_vault.frappe_vault.is_vault_secrets_api_enabled",
 		lambda: False,
 	)
-	# Also guard the legacy key so the real is_vault_secrets_api_enabled in vault_proxy
-	# doesn't short-circuit via enable_vault_secrets if set in site config
-	monkeypatch.setitem(frappe.conf, "enable_vault_secrets", False)
+	# Also patch the conf key so that the real is_vault_secrets_api_enabled()
+	# returns False even if site_config.json has it set to true.
+	monkeypatch.setitem(frappe.conf, "vault_secrets_api_enabled", False)
 	frappe.set_user(VAULT_ADMIN)
 
 	with pytest.raises(frappe.PermissionError):

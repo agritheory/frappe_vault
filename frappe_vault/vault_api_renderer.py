@@ -37,6 +37,8 @@ import frappe
 from werkzeug.exceptions import HTTPException
 from werkzeug.wrappers import Response
 
+from frappe.auth import validate_auth, validate_auth_via_api_keys
+
 from frappe_vault.vault_client import VaultConnectionError, VaultError, get_vault_client
 
 BLOCKED_PATH_PREFIXES = (
@@ -166,8 +168,6 @@ def authenticate_vault_token() -> None:
 	if not token or ":" not in token:
 		return
 
-	from frappe.auth import validate_auth_via_api_keys
-
 	validate_auth_via_api_keys(["token", token])
 
 
@@ -189,8 +189,6 @@ def handle_vault_delete() -> None:
 
 	# Authenticate — validate_auth() normally runs after init_request() returns,
 	# but we need the session user set now.
-	from frappe.auth import validate_auth
-
 	validate_auth()
 
 	vault_path = "/" + request.path.strip("/")

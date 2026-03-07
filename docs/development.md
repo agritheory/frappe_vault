@@ -84,7 +84,7 @@ bench setup-openbao
 - Starts OpenBao and waits for it to be ready
 - Initialises OpenBao and saves recovery keys to `config/openbao-recovery-keys.txt` (0600)
 - Enables the KV v2 secrets engine at `secret/`
-- Writes `vault_url`, `vault_token`, and `enable_vault_secrets: true` to the site config
+- Writes `vault_url` and `vault_token` to the site config (feature flags are not enabled automatically)
 
 9. **Launch your bench**:
 ```shell

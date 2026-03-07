@@ -8,13 +8,18 @@ These endpoints handle CRUD operations for Vault Secret documents
 and integrate with OpenBao for secret value storage.
 """
 
+import json
 from typing import Any
 
 import frappe
 from frappe import _
 from frappe.desk.doctype.tag.tag import add_tag
 
-from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import VaultSecret
+from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import (
+	VaultSecret,
+	ensure_folder_chain,
+	has_permission as vault_has_permission,
+)
 from frappe_vault.vault_client import VaultError, get_vault_client
 from frappe_vault.vault_proxy import is_vault_secrets_api_enabled, log_vault_access
 
@@ -39,10 +44,6 @@ def folder_ancestry_has_permission(doc, ptype: str, user: str) -> bool:
 	"""
 	if ptype not in ("read", "write", "share"):
 		return False
-	from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import (
-		has_permission as vault_has_permission,
-	)
-
 	return vault_has_permission(doc, ptype, user) is True
 
 
@@ -276,12 +277,8 @@ def create_secret(
 	Returns:
 	    Created secret metadata
 	"""
-	from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import ensure_folder_chain
-
 	check_secrets_api_enabled()
 	if isinstance(tags, str):
-		import json
-
 		tags = json.loads(tags) if tags else None
 
 	ensure_folder_chain(path)
@@ -327,8 +324,6 @@ def update_secret(
 	check_secret_permission(name, "write")
 
 	if isinstance(tags, str):
-		import json
-
 		tags = json.loads(tags) if tags else None
 
 	doc = frappe.get_doc("Vault Secret", name)

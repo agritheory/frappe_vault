@@ -12,6 +12,12 @@ Requires OpenBao to be running. URL and token are read from (in priority order):
 
 import frappe
 import pytest
+from frappe.utils.password import (
+	check_password,
+	get_decrypted_password,
+	set_encrypted_password,
+	update_password,
+)
 
 from frappe_vault.tests.fixtures import users
 from frappe_vault.vault_client import VaultClient, VaultError, reset_vault_client
@@ -110,14 +116,12 @@ def test_special_characters_in_path(vault_client, cleanup_secrets):
 
 def test_encrypted_password_patches_are_active():
 	"""Verify the monkey-patches from frappe_vault.__init__ are in place."""
-	from frappe.utils.password import get_decrypted_password, set_encrypted_password
 
 	assert "frappe_vault" in set_encrypted_password.__module__
 	assert "frappe_vault" in get_decrypted_password.__module__
 
 
 def test_user_password_patches_are_active():
-	from frappe.utils.password import check_password, update_password
 
 	assert "frappe_vault" in update_password.__module__
 	assert "frappe_vault" in check_password.__module__
@@ -125,7 +129,6 @@ def test_user_password_patches_are_active():
 
 def test_user_password_via_openbao(vault_client, cleanup_secrets):
 	"""update_password stores a bcrypt hash in OpenBao; check_password verifies it."""
-	from frappe.utils.password import check_password, update_password
 
 	cleanup_secrets("User", "vault-test-user@vault.test", "password")
 	update_password("vault-test-user@vault.test", "test-password-123", "User", "password")
@@ -140,7 +143,6 @@ def test_user_password_via_openbao(vault_client, cleanup_secrets):
 
 def test_user_password_wrong_password(vault_client, cleanup_secrets):
 	"""Wrong password raises AuthenticationError."""
-	from frappe.utils.password import check_password, update_password
 
 	cleanup_secrets("User", "vault-wrong-pw@vault.test", "password")
 	update_password("vault-wrong-pw@vault.test", "correct-password", "User", "password")
@@ -151,7 +153,6 @@ def test_user_password_wrong_password(vault_client, cleanup_secrets):
 
 def test_no_password_in_auth_table_when_openbao_enabled(vault_client, cleanup_secrets):
 	"""Passwords must NOT be stored in __Auth when OpenBao user passwords are enabled."""
-	from frappe.utils.password import update_password
 
 	cleanup_secrets("User", "vault-no-db@vault.test", "password")
 	update_password("vault-no-db@vault.test", "my-password", "User", "password")
@@ -186,7 +187,6 @@ def test_user_passwords_migrated_to_openbao(vault_client):
 
 def test_migrated_passwords_authenticate():
 	"""Migrated bcrypt hashes must pass check_password against the original plaintext."""
-	from frappe.utils.password import check_password
 
 	for u in users:
 		result = check_password(u["email"], u["password"])

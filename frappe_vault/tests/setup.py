@@ -4,7 +4,10 @@
 import frappe
 from frappe.desk.doctype.tag.tag import add_tag
 from frappe.desk.page.setup_wizard.setup_wizard import setup_complete
+from frappe.utils.password import update_password
 
+from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import ensure_folder_chain
+from frappe_vault.install import migrate_passwords_to_vault
 from frappe_vault.tests.fixtures import users
 
 
@@ -46,8 +49,6 @@ def create_test_data():
 	create_test_users()
 	frappe.db.commit()
 	frappe.conf["enable_vault_user_passwords"] = True
-	from frappe_vault.install import migrate_passwords_to_vault
-
 	migrate_passwords_to_vault(skip_backup=True)
 	create_vault_secrets()
 	frappe.db.commit()
@@ -55,8 +56,6 @@ def create_test_data():
 
 def create_test_users():
 	"""Create test users with known passwords stored initially in __Auth."""
-	from frappe.utils.password import update_password
-
 	for user_data in users:
 		if frappe.db.exists("User", user_data["email"]):
 			continue
@@ -81,8 +80,6 @@ def create_vault_secrets():
 	Parent folder docs (is_folder=1) are created via _ensure_folder_chain before
 	each secret so the folder tree is fully populated for permission tests.
 	"""
-	from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import ensure_folder_chain
-
 	secrets = [
 		# Root level
 		{

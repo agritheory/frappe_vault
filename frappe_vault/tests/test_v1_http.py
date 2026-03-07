@@ -16,6 +16,7 @@ import os
 import frappe
 import pytest
 import requests
+from frappe.core.doctype.user.user import generate_keys
 
 FRAPPE_URL = os.environ.get("FRAPPE_URL", "http://localhost:8004")
 
@@ -31,8 +32,6 @@ def v1_url(path: str) -> str:
 @pytest.fixture(scope="module")
 def api_keys(db_instance):
 	"""Generate fresh API keys for Administrator and commit them to the live DB."""
-	from frappe.core.doctype.user.user import generate_keys
-
 	keys = generate_keys("Administrator")
 	# frappe.db.commit is mocked in db_instance; use raw SQL so the HTTP server
 	# can immediately validate the newly-written keys.

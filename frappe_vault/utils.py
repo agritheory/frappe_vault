@@ -3,12 +3,16 @@
 
 import frappe
 
+from frappe_vault.vault_client import get_vault_client
+
 VAULT_HEALTH_CACHE_TTL = 30  # seconds
 
 
 def any_vault_feature_enabled() -> bool:
 	return bool(
-		frappe.conf.get("enable_vault_secrets") or frappe.conf.get("enable_vault_user_passwords")
+		frappe.conf.get("vault_password_fields_enabled")
+		or frappe.conf.get("enable_vault_user_passwords")
+		or frappe.conf.get("vault_secrets_api_enabled")
 	)
 
 
@@ -23,8 +27,6 @@ def vault_available_cached() -> bool:
 	cached = frappe.cache.get_value(cache_key)
 	if cached is not None:
 		return cached
-
-	from frappe_vault.vault_client import get_vault_client
 
 	available = get_vault_client().is_available()
 	frappe.cache.set_value(cache_key, available, expires_in_sec=VAULT_HEALTH_CACHE_TTL)

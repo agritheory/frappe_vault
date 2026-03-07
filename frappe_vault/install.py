@@ -1,13 +1,20 @@
 # Copyright (c) 2025, AgriTheory and contributors
 # For license information, please see license.txt
 
+import json
 import os
 import shutil
 import subprocess
+import tarfile
+import urllib.error
+import urllib.request
+from datetime import datetime
 from getpass import getpass
 from sys import platform
 
 import frappe
+
+from frappe_vault.vault_client import VaultError, get_vault_client
 
 
 def is_root():
@@ -39,13 +46,14 @@ def check_openbao_installed():
 	if shutil.which("bao") is not None:
 		return True
 	try:
-		import urllib.request
-
 		vault_url = frappe.conf.get("vault_url", "http://localhost:8200")
-		with urllib.request.urlopen(f"{vault_url}/v1/sys/health", timeout=2) as r:
-			# OpenBao returns 200/429/472/473/501/503 depending on seal state —
-			# any response means it is running.
-			return r.status in (200, 429, 472, 473, 501, 503)
+		try:
+			with urllib.request.urlopen(f"{vault_url}/v1/sys/health", timeout=2) as r:
+				return r.status in (200, 429, 472, 473, 501, 503)
+		except urllib.error.HTTPError as e:
+			# urllib raises HTTPError for non-2xx — 501 (not initialized) and
+			# 503 (sealed) both mean OpenBao is running.
+			return e.code in (200, 429, 472, 473, 501, 503)
 	except Exception:
 		return False
 
@@ -109,27 +117,54 @@ def install_openbao():
 	# --- Fall back to GitHub binary download ----------------------------
 	print("apt unavailable; downloading OpenBao binary from GitHub releases...")
 	try:
-		import json
-		import urllib.request
-		import zipfile
-
-		api_url = "https://api.github.com/repos/openbao/openbao/releases/latest"
-		with urllib.request.urlopen(api_url, timeout=10) as r:
-			tag = json.loads(r.read())["tag_name"]  # e.g. "v2.0.3"
+		req = urllib.request.Request(
+			"https://api.github.com/repos/openbao/openbao/releases/latest",
+			headers={"Accept": "application/vnd.github+json"},
+		)
+		with urllib.request.urlopen(req, timeout=10) as r:
+			release = json.loads(r.read())
+		tag = release["tag_name"]
 		version = tag.lstrip("v")
 
-		zip_url = (
-			f"https://github.com/openbao/openbao/releases/download/{tag}" f"/bao_{version}_linux_amd64.zip"
-		)
-		print(f"Downloading {zip_url} ...")
-		zip_path = f"/tmp/bao_{version}_linux_amd64.zip"
-		urllib.request.urlretrieve(zip_url, zip_path)
+		tar_url = None
+		tar_name = None
+		for asset in release.get("assets", []):
+			name = asset["name"]
+			name_lower = name.lower()
+			if (
+				name_lower.endswith(".tar.gz")
+				and name_lower.startswith("bao_")
+				and "linux" in name_lower
+				and ("x86_64" in name_lower or "amd64" in name_lower)
+			):
+				tar_url = asset["browser_download_url"]
+				tar_name = name
+				break
 
-		with zipfile.ZipFile(zip_path, "r") as zf:
-			zf.extract("bao", "/tmp/bao_extract")
+		if not tar_url:
+			raise RuntimeError(
+				f"No Linux x86_64 tar.gz asset in release {tag}. "
+				f"Available: {[a['name'] for a in release.get('assets', [])]}"
+			)
+
+		print(f"Downloading {tar_name} ...")
+		tar_path = f"/tmp/bao_{version}.tar.gz"
+		urllib.request.urlretrieve(tar_url, tar_path)
+
+		extract_dir = f"/tmp/bao_{version}_extract"
+		os.makedirs(extract_dir, exist_ok=True)
+		with tarfile.open(tar_path, "r:gz") as tf:
+			binary_member = next(
+				(m for m in tf.getmembers() if m.name in ("bao", "./bao") or m.name.endswith("/bao")),
+				None,
+			)
+			if not binary_member:
+				raise RuntimeError(f"No bao binary in tarball. Contents: {[m.name for m in tf.getmembers()]}")
+			binary_member.name = os.path.basename(binary_member.name)
+			tf.extract(binary_member, extract_dir)
 
 		dest = "/usr/local/bin/bao"
-		subprocess.run(["sudo", "mv", "/tmp/bao_extract/bao", dest], check=True)
+		subprocess.run(["sudo", "mv", os.path.join(extract_dir, "bao"), dest], check=True)
 		subprocess.run(["sudo", "chmod", "+x", dest], check=True)
 
 		if check_openbao_installed():
@@ -248,8 +283,6 @@ def backup_auth_table() -> str | None:
 	Returns:
 	    Path to the backup file, or None if backup failed
 	"""
-	from datetime import datetime
-
 	# Check if there are any entries to backup
 	count = frappe.db.sql("SELECT COUNT(*) FROM `__Auth`")[0][0]
 
@@ -368,14 +401,12 @@ def migrate_passwords_to_vault(dry_run: bool = False, skip_backup: bool = False)
 	Returns:
 	    Dictionary with migration statistics
 	"""
-	from frappe_vault.vault_client import VaultError, get_vault_client
-
 	# Check if vault is configured
-	if not frappe.conf.get("enable_vault_secrets") and not frappe.conf.get(
+	if not frappe.conf.get("vault_password_fields_enabled") and not frappe.conf.get(
 		"enable_vault_user_passwords"
 	):
 		print("OpenBao is not enabled in site_config. Skipping migration.")
-		print("Set 'enable_vault_secrets' and/or 'enable_vault_user_passwords' to true first.")
+		print("Set 'vault_password_fields_enabled' and/or 'enable_vault_user_passwords' to true first.")
 		return {"skipped": True, "reason": "vault_not_enabled"}
 
 	# Check vault connectivity
@@ -468,8 +499,6 @@ def cleanup_migrated_passwords(confirm: bool = False) -> dict:
 	Returns:
 	    Dictionary with cleanup statistics
 	"""
-	from frappe_vault.vault_client import get_vault_client
-
 	if not confirm:
 		print("This will DELETE passwords from the __Auth table.")
 		print("Only run this after verifying migration was successful.")

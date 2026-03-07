@@ -3,34 +3,30 @@
 
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
+import tarfile
 import time
+import urllib.error
+import urllib.request
+import zipfile
 
 import click
 import frappe
 from frappe.commands import get_site, pass_context
+from frappe.utils import get_bench_path
+
+from frappe_vault.install import cleanup_migrated_passwords as do_cleanup
+from frappe_vault.install import migrate_passwords_to_vault as do_migrate
+from frappe_vault.install import restore_auth_backup as do_restore
+from frappe_vault.vault_client import get_vault_client
 
 
 # ---------------------------------------------------------------------------
 # Helpers shared across commands
 # ---------------------------------------------------------------------------
-
-
-def get_bench_path():
-	"""Return the bench root directory."""
-	try:
-		from frappe.utils import get_bench_path
-
-		return get_bench_path()
-	except Exception:
-		cwd = os.getcwd()
-		while cwd != "/":
-			if os.path.isdir(os.path.join(cwd, "sites")):
-				return cwd
-			cwd = os.path.dirname(cwd)
-		return os.getcwd()
 
 
 def ensure_bao_binary() -> str:
@@ -48,27 +44,54 @@ def ensure_bao_binary() -> str:
 	# Not found anywhere — download the pre-built binary from GitHub releases.
 	click.echo("'bao' not found. Downloading OpenBao from GitHub releases...")
 	try:
-		import json
-		import urllib.request
-		import zipfile
+		req = urllib.request.Request(
+			"https://api.github.com/repos/openbao/openbao/releases/latest",
+			headers={"Accept": "application/vnd.github+json"},
+		)
+		with urllib.request.urlopen(req, timeout=15) as r:
+			release = json.loads(r.read())
 
-		with urllib.request.urlopen(
-			"https://api.github.com/repos/openbao/openbao/releases/latest", timeout=15
-		) as r:
-			tag = json.loads(r.read())["tag_name"]  # e.g. "v2.0.3"
+		tag = release["tag_name"]
 		version = tag.lstrip("v")
 
-		zip_url = (
-			f"https://github.com/openbao/openbao/releases/download/{tag}" f"/bao_{version}_linux_amd64.zip"
-		)
-		click.echo(f"Downloading {zip_url} ...")
-		zip_path = f"/tmp/bao_{version}.zip"
-		urllib.request.urlretrieve(zip_url, zip_path)
+		# Linux releases ship as .tar.gz (not .zip — that's Windows only).
+		# The filename uses a capitalised OS name, e.g. bao_2.5.1_Linux_x86_64.tar.gz.
+		# Exclude the HSM variant (bao-hsm_*).
+		tar_url = None
+		tar_name = None
+		for asset in release.get("assets", []):
+			name = asset["name"]
+			name_lower = name.lower()
+			if (
+				name_lower.endswith(".tar.gz")
+				and name_lower.startswith("bao_")
+				and "linux" in name_lower
+				and ("x86_64" in name_lower or "amd64" in name_lower)
+			):
+				tar_url = asset["browser_download_url"]
+				tar_name = name
+				break
+
+		if not tar_url:
+			asset_names = [a["name"] for a in release.get("assets", [])]
+			raise RuntimeError(f"No Linux x86_64 tar.gz asset in release {tag}. Available: {asset_names}")
+
+		click.echo(f"Downloading {tar_name} ...")
+		tar_path = f"/tmp/bao_{version}.tar.gz"
+		urllib.request.urlretrieve(tar_url, tar_path)
 
 		extract_dir = f"/tmp/bao_{version}_extract"
 		os.makedirs(extract_dir, exist_ok=True)
-		with zipfile.ZipFile(zip_path, "r") as zf:
-			zf.extract("bao", extract_dir)
+		with tarfile.open(tar_path, "r:gz") as tf:
+			# Find the bao binary inside the archive
+			binary_member = next(
+				(m for m in tf.getmembers() if m.name in ("bao", "./bao") or m.name.endswith("/bao")),
+				None,
+			)
+			if not binary_member:
+				raise RuntimeError(f"No bao binary in tarball. Contents: {[m.name for m in tf.getmembers()]}")
+			binary_member.name = os.path.basename(binary_member.name)
+			tf.extract(binary_member, extract_dir)
 
 		dest = "/usr/local/bin/bao"
 		subprocess.run(["sudo", "mv", os.path.join(extract_dir, "bao"), dest], check=True)
@@ -106,8 +129,6 @@ def reset_openbao_config(bench_path: str) -> None:
 		if "[program:openbao]" in content:
 			# Strip the block: everything from the [program:openbao] line to the
 			# next blank line that precedes a new [section] or end-of-file.
-			import re
-
 			cleaned = re.sub(r"\n\[program:openbao\][^\[]*", "", content)
 			with open(bench_sup_conf, "w") as f:
 				f.write(cleaned)
@@ -157,8 +178,8 @@ listener "tcp" {{
 # Static seal — OpenBao unseals automatically on restart using this inline key.
 # The key is also saved to config/openbao-seal.key for disaster recovery.
 seal "static" {{
-  key    = "{seal_key}"
-  key_id = "frappe-vault-1"
+  current_key_id = "frappe-vault-1"
+  current_key    = "{seal_key}"
 }}
 
 api_addr = "http://127.0.0.1:8200"
@@ -166,12 +187,17 @@ api_addr = "http://127.0.0.1:8200"
 
 
 def check_openbao_health(vault_addr: str) -> bool:
-	"""Return True if OpenBao is responding at vault_addr."""
-	try:
-		import urllib.request
+	"""Return True if OpenBao is responding at vault_addr.
 
+	urllib.request raises HTTPError for non-2xx responses, so we catch it
+	explicitly — OpenBao returns 501 when uninitialized and 503 when sealed,
+	both of which mean it is running and reachable.
+	"""
+	try:
 		with urllib.request.urlopen(f"{vault_addr}/v1/sys/health", timeout=2) as r:
 			return r.status in (200, 429, 472, 473, 501, 503)
+	except urllib.error.HTTPError as e:
+		return e.code in (200, 429, 472, 473, 501, 503)
 	except Exception:
 		return False
 
@@ -187,8 +213,6 @@ def wait_for_openbao_health(vault_addr: str, timeout: int = 30) -> bool:
 
 def check_openbao_initialized(vault_addr: str) -> bool:
 	try:
-		import urllib.request
-
 		with urllib.request.urlopen(f"{vault_addr}/v1/sys/init", timeout=5) as r:
 			return json.loads(r.read()).get("initialized", False)
 	except Exception:
@@ -207,13 +231,15 @@ def init_openbao(vault_addr: str) -> dict:
 
 
 def enable_kv_v2(vault_addr: str, token: str) -> None:
-	subprocess.run(
+	"""Enable the KV v2 secrets engine at secret/. Safe to call if already enabled."""
+	result = subprocess.run(
 		["bao", "secrets", "enable", "-path=secret", "kv-v2"],
 		env={**os.environ, "BAO_ADDR": vault_addr, "BAO_TOKEN": token},
 		capture_output=True,
 		text=True,
-		check=True,
 	)
+	if result.returncode != 0 and "path is already in use" not in result.stderr:
+		raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout, result.stderr)
 
 
 def list_sites(bench_path: str) -> list[str]:
@@ -237,7 +263,6 @@ def update_site_config(bench_path: str, site: str, vault_addr: str, token: str) 
 		{
 			"vault_url": vault_addr,
 			"vault_token": token,
-			"enable_vault_secrets": True,
 		}
 	)
 	with open(config_path, "w") as f:
@@ -311,10 +336,12 @@ startretries=10
 		click.echo(f"Warning: could not update {bench_sup_conf}: {e}", err=True)
 		return False
 
-	# Inform supervisor about the updated config; start_via_supervisor handles
-	# the actual process launch.
+	# Inform supervisord about the new program entry so it manages OpenBao
+	# on future restarts.  The actual first-run start is handled by
+	# start_background() in the main setup flow.
 	try:
 		subprocess.run(["sudo", "supervisorctl", "reread"], check=True, capture_output=True)
+		subprocess.run(["sudo", "supervisorctl", "update"], check=True, capture_output=True)
 		click.echo(f"OpenBao added to supervisor config: {bench_sup_conf}")
 		return True
 	except Exception as e:
@@ -338,36 +365,6 @@ def setup_procfile_entry(bench_path: str) -> None:
 		with open(procfile_path, "w") as f:
 			f.write(entry)
 	click.echo("Added OpenBao to Procfile.")
-
-
-def start_via_supervisor() -> bool:
-	"""Register and start OpenBao via supervisor.
-
-	`supervisorctl update` both registers the new program entry and starts it
-	(because autostart=true).  We use update rather than a bare `start` call so
-	that the very first invocation (where supervisor doesn't know the program yet)
-	works without an extra reread/update cycle.
-	"""
-	try:
-		result = subprocess.run(
-			["sudo", "supervisorctl", "update"],
-			check=False,
-			capture_output=True,
-			text=True,
-		)
-		if result.returncode == 0:
-			return True
-		# Fallback: update may have already registered the program in a previous
-		# run; try an explicit start in that case.
-		subprocess.run(
-			["sudo", "supervisorctl", "start", "openbao"],
-			check=True,
-			capture_output=True,
-		)
-		return True
-	except Exception as e:
-		click.echo(f"Warning: could not start OpenBao via supervisor: {e}", err=True)
-		return False
 
 
 def start_background(config_path: str) -> None:
@@ -410,8 +407,9 @@ def setup_openbao(site=None, production=False, reset=False):
 	For production benches (auto-detected via supervisor config, or --production flag)
 	this writes to the bench supervisor.conf and starts OpenBao immediately.
 
-	If the bench has exactly one site and --site is omitted, vault_url, vault_token,
-	and enable_vault_secrets are written to that site's site_config.json automatically.
+	If the bench has exactly one site and --site is omitted, vault_url and vault_token
+	are written to that site's site_config.json automatically. Feature flags such as
+	vault_secrets_api_enabled must be set explicitly by an administrator.
 
 	Use --reset to wipe all existing OpenBao config files and start completely fresh.
 	"""
@@ -467,10 +465,11 @@ def setup_openbao(site=None, production=False, reset=False):
 		click.echo("OpenBao is already running.")
 	else:
 		click.echo("Starting OpenBao...")
-		if use_production:
-			start_via_supervisor()
-		else:
-			start_background(config_path)
+		# Always start the process directly in the background for the initial
+		# setup — this is reliable regardless of how supervisord is wired up.
+		# The supervisor / Procfile entry registered above ensures it is
+		# managed (auto-restart, start on boot) from this point forward.
+		start_background(config_path)
 
 		click.echo("Waiting for OpenBao to be ready...", nl=False)
 		if not wait_for_openbao_health(vault_addr, timeout=30):
@@ -526,8 +525,7 @@ def setup_openbao(site=None, production=False, reset=False):
 	else:
 		click.echo("\nAdd the following to your site_config.json:")
 		click.echo(f'  "vault_url": "{vault_addr}",')
-		click.echo(f'  "vault_token": "{root_token}",')
-		click.echo('  "enable_vault_secrets": true')
+		click.echo(f'  "vault_token": "{root_token}"')
 
 	click.echo("\nOpenBao setup complete.")
 
@@ -571,15 +569,17 @@ def vault_status(context):
 
 	try:
 		click.echo(f"Site: {site}")
-		click.echo(f"enable_vault_secrets:       {frappe.conf.get('enable_vault_secrets', False)}")
 		click.echo(
-			f"enable_vault_user_passwords: {frappe.conf.get('enable_vault_user_passwords', False)}"
+			f"vault_password_fields_enabled: {frappe.conf.get('vault_password_fields_enabled', False)}"
 		)
-		click.echo(f"vault_url:                  {frappe.conf.get('vault_url', 'not set')}")
-		click.echo(f"vault_proxy_enabled:        {frappe.conf.get('vault_proxy_enabled', False)}")
-		click.echo(f"vault_secrets_api_enabled:  {frappe.conf.get('vault_secrets_api_enabled', False)}")
-
-		from frappe_vault.vault_client import get_vault_client
+		click.echo(
+			f"enable_vault_user_passwords:   {frappe.conf.get('enable_vault_user_passwords', False)}"
+		)
+		click.echo(
+			f"vault_secrets_api_enabled:     {frappe.conf.get('vault_secrets_api_enabled', False)}"
+		)
+		click.echo(f"vault_url:                     {frappe.conf.get('vault_url', 'not set')}")
+		click.echo(f"vault_proxy_enabled:           {frappe.conf.get('vault_proxy_enabled', False)}")
 
 		try:
 			client = get_vault_client()
@@ -614,8 +614,6 @@ def migrate_passwords_to_vault(context, dry_run=False, skip_backup=False):
 	frappe.init(site=site)
 	frappe.connect()
 
-	from frappe_vault.install import migrate_passwords_to_vault as do_migrate
-
 	try:
 		do_migrate(dry_run=dry_run, skip_backup=skip_backup)
 	finally:
@@ -636,8 +634,6 @@ def restore_auth_backup(context, backup_file):
 	frappe.init(site=site)
 	frappe.connect()
 
-	from frappe_vault.install import restore_auth_backup as do_restore
-
 	try:
 		do_restore(backup_file)
 	finally:
@@ -657,8 +653,6 @@ def cleanup_migrated_passwords(context, confirm=False):
 	site = get_site(context)
 	frappe.init(site=site)
 	frappe.connect()
-
-	from frappe_vault.install import cleanup_migrated_passwords as do_cleanup
 
 	try:
 		do_cleanup(confirm=confirm)
