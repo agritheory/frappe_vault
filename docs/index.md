@@ -54,7 +54,7 @@ Frappe Vault supports two types of password storage:
 
 | Type | Config Key | Use Case |
 |------|------------|----------|
-| Encrypted Passwords | `enable_vault_secrets` | API keys, secrets, retrievable passwords |
+| Encrypted Passwords | `vault_password_fields_enabled` | API keys, secrets, retrievable passwords |
 | User Login Passwords | `enable_vault_user_passwords` | User authentication (hashed) |
 
 ### Vault Secrets Management

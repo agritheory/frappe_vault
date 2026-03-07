@@ -422,14 +422,12 @@ def test_get_shared_users(cleanup_secret):
 
 @pytest.fixture
 def secrets_api_disabled(monkeypatch):
-	"""Disable the Vault Secrets API by patching both config keys.
+	"""Disable the Vault Secrets API.
 
-	is_vault_secrets_api_enabled() checks the canonical 'vault_secrets_api_enabled'
-	key AND the legacy 'enable_vault_secrets' key. Both must be False to guarantee
-	the API is disabled regardless of what the test site's site_config.json contains.
+	Sets vault_secrets_api_enabled to False to guarantee the API is disabled
+	regardless of what the test site's site_config.json contains.
 	"""
 	monkeypatch.setitem(frappe.conf, "vault_secrets_api_enabled", False)
-	monkeypatch.setitem(frappe.conf, "enable_vault_secrets", False)
 
 
 def testsecrets_api_disabled_blocks_get_secrets(secrets_api_disabled):

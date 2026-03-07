@@ -32,13 +32,10 @@ def is_vault_secrets_api_enabled() -> bool:
 	etc. No access to the Vault Secret doctype or its CRUD API is permitted,
 	even for Administrator.
 
-	Set ``vault_secrets_api_enabled: true`` (canonical) or the legacy key
-	``enable_vault_secrets: true`` in ``site_config.json`` to allow users with
-	appropriate roles to manage secrets through the desk UI and API.
+	Set ``vault_secrets_api_enabled: true`` in ``site_config.json`` to allow
+	users with appropriate roles to manage secrets through the desk UI and API.
 	"""
-	return bool(
-		frappe.conf.get("vault_secrets_api_enabled") or frappe.conf.get("enable_vault_secrets")
-	)
+	return bool(frappe.conf.get("vault_secrets_api_enabled"))
 
 
 def get_vault_allowed_roles() -> list[str]:

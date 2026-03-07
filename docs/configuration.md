@@ -14,11 +14,14 @@ Add the following keys to your site's configuration file (`/sites/{site_name}/si
 
 ```json
 {
-  // Enable OpenBao storage for encrypted Password fields (API keys, secrets)
-  "enable_vault_secrets": true,
+  // Enable OpenBao storage for Frappe Password fields (API keys, secrets, etc.)
+  "vault_password_fields_enabled": true,
 
   // Enable OpenBao storage for user login passwords (hashed)
   "enable_vault_user_passwords": true,
+
+  // Enable the Vault Secret doctype, CRUD API, and desk UI
+  "vault_secrets_api_enabled": true,
 
   // OpenBao server URL
   // Can also be set via BAO_ADDR or VAULT_ADDR environment variable
@@ -36,8 +39,9 @@ Add the following keys to your site's configuration file (`/sites/{site_name}/si
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enable_vault_secrets` | boolean | `false` | Enable OpenBao for encrypted Password fields |
-| `enable_vault_user_passwords` | boolean | `false` | Enable OpenBao for user login passwords |
+| `vault_password_fields_enabled` | boolean | `false` | Enable OpenBao storage for Frappe Password-type fields (API keys, retrievable secrets) |
+| `enable_vault_user_passwords` | boolean | `false` | Enable OpenBao storage for user login passwords (hashed) |
+| `vault_secrets_api_enabled` | boolean | `false` | Enable the Vault Secret doctype, CRUD API, and desk UI |
 | `vault_url` | string | `http://localhost:8200` | OpenBao server URL |
 | `vault_token` | string | - | OpenBao authentication token |
 
@@ -47,12 +51,6 @@ Add the following keys to your site's configuration file (`/sites/{site_name}/si
 |-----|------|---------|-------------|
 | `vault_proxy_enabled` | boolean | `false` | Enable the Vault proxy API for external access |
 | `vault_allowed_roles` | list | `["System Manager"]` | Roles allowed to use the proxy API |
-
-### Vault Secrets API Settings
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `vault_secrets_api_enabled` | boolean | `false` | Enable the Vault Secrets CRUD API and UI |
 
 ### Multi-Site Sync Settings
 
@@ -192,7 +190,6 @@ Add to `site_config.json`:
 }
 ```
 
-> **Note**: Setting `enable_vault_secrets: true` also enables the Vault Secrets API for backward compatibility.
 
 ### The Vault Secret Document
 
@@ -424,7 +421,7 @@ bench --site {site} show-pending-jobs
 
 ## Login Page Behavior During Outages
 
-When any vault feature is enabled (`enable_vault_secrets` or `enable_vault_user_passwords`)
+When any vault feature is enabled (`vault_password_fields_enabled`, `enable_vault_user_passwords`, or `vault_secrets_api_enabled`)
 and local OpenBao is unreachable, users who visit `/login` are automatically redirected to
 `/vault-unavailable` — a maintenance page that explains the situation and provides a
 **Try Again** link.
@@ -543,7 +540,7 @@ bench setup-openbao --production --site {site}
 3. Starts OpenBao and polls until healthy
 4. Initialises OpenBao; saves recovery keys to `config/openbao-recovery-keys.txt` (0600)
 5. Enables the KV v2 secrets engine at `secret/`
-6. Writes `vault_url`, `vault_token`, and `enable_vault_secrets: true` to `{site}/site_config.json`
+6. Writes `vault_url` and `vault_token` to `{site}/site_config.json` (feature flags are **not** enabled automatically)
 
 If any step has already been completed (e.g. OpenBao is already running or already initialised) that step is skipped automatically.
 
@@ -564,7 +561,7 @@ bench --site {site} vault-status
 ```
 
 **Output:**
-- Site configuration (`enable_vault_secrets`, `enable_vault_user_passwords`, `vault_secrets_api_enabled`, `vault_proxy_enabled`)
+- Site configuration (`vault_password_fields_enabled`, `enable_vault_user_passwords`, `vault_secrets_api_enabled`, `vault_proxy_enabled`)
 - OpenBao connection status (connected/not available)
 - OpenBao health (initialized, sealed status)
 - Count of passwords remaining in `__Auth` table

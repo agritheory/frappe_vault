@@ -6,9 +6,11 @@ __version__ = "15.3.0"
 import frappe
 import frappe.utils.password
 from frappe import _
-from frappe.utils.password import passlibctx
+from frappe.sessions import clear_sessions
+from frappe.utils.password import delete_login_failed_cache, passlibctx
 
 from frappe_vault.vault_client import VaultClient, VaultError, get_vault_client
+from frappe_vault.vault_sync import sync_delete, sync_write
 
 # Store original functions
 original_get_decrypted_password = frappe.utils.password.get_decrypted_password
@@ -19,7 +21,7 @@ original_check_password = frappe.utils.password.check_password
 
 def is_vault_enabled() -> bool:
 	"""Check if Vault secrets are enabled in site config (for encrypted Password fields)."""
-	return bool(frappe.conf.get("enable_vault_secrets"))
+	return bool(frappe.conf.get("vault_password_fields_enabled"))
 
 
 def is_vault_user_passwords_enabled() -> bool:
@@ -141,8 +143,6 @@ def patched_set_encrypted_password(
 		return original_set_encrypted_password(doctype, name, pwd, fieldname)
 
 	try:
-		from frappe_vault.vault_sync import sync_write
-
 		sync_write(doctype, name, fieldname, pwd)
 
 	except VaultError as e:
@@ -167,8 +167,6 @@ def patched_delete_password(doctype: str, name: str, fieldname: str = "password"
 	"""
 	if is_field_vault_enabled(doctype, fieldname):
 		try:
-			from frappe_vault.vault_sync import sync_delete
-
 			sync_delete(doctype, name, fieldname)
 		except VaultError as e:
 			frappe.log_error(
@@ -218,9 +216,6 @@ def patched_update_password(
 
 	try:
 		hashed_pwd = passlibctx.hash(pwd)
-
-		from frappe_vault.vault_sync import sync_write
-
 		sync_write(doctype, user, fieldname, hashed_pwd)
 
 		# Remove any existing password from __Auth table (no plaintext/hash in DB)
@@ -234,8 +229,6 @@ def patched_update_password(
 		)
 
 		if logout_all_sessions:
-			from frappe.sessions import clear_sessions
-
 			clear_sessions(user=user, force=True)
 
 	except VaultError as e:
@@ -289,8 +282,6 @@ def patched_check_password(
 			raise frappe.AuthenticationError(_("Incorrect User or Password"))
 
 		if delete_tracker_cache:
-			from frappe.utils.password import delete_login_failed_cache
-
 			delete_login_failed_cache(user)
 
 		if passlibctx.needs_update(stored_hash):

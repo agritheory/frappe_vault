@@ -49,7 +49,7 @@ bench setup-openbao --production --site {{ site name }}
 - Starts OpenBao via supervisor and waits for it to be ready
 - Initialises OpenBao and saves recovery keys to `config/openbao-recovery-keys.txt` (0600)
 - Enables the KV v2 secrets engine at `secret/`
-- Writes `vault_url`, `vault_token`, and `enable_vault_secrets: true` to `{{ site name }}/site_config.json`
+- Writes `vault_url` and `vault_token` to `{{ site name }}/site_config.json` (feature flags are not enabled automatically)
 
 > **Security note**: `setup-openbao` writes the root token directly to `site_config.json` for convenience. For production, replace it with a restricted policy token once the site is running — see [OpenBao Token Policy](#openbao-token-policy) below. You can also supply the token via environment variable instead:
 > ```ini

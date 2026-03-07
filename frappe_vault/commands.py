@@ -3,14 +3,25 @@
 
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
+import tarfile
 import time
+import urllib.error
+import urllib.request
+import zipfile
 
 import click
 import frappe
 from frappe.commands import get_site, pass_context
+from frappe.utils import get_bench_path
+
+from frappe_vault.install import cleanup_migrated_passwords as do_cleanup
+from frappe_vault.install import migrate_passwords_to_vault as do_migrate
+from frappe_vault.install import restore_auth_backup as do_restore
+from frappe_vault.vault_client import get_vault_client
 
 
 # ---------------------------------------------------------------------------
@@ -18,19 +29,117 @@ from frappe.commands import get_site, pass_context
 # ---------------------------------------------------------------------------
 
 
-def get_bench_path():
-	"""Return the bench root directory."""
-	try:
-		from frappe.utils import get_bench_path
+def ensure_bao_binary() -> str:
+	"""Return the path to the bao binary, downloading it from GitHub if absent."""
+	bao = shutil.which("bao")
+	if not bao:
+		for candidate in ("/usr/local/bin/bao", "/usr/bin/bao", "/opt/openbao/bin/bao"):
+			if os.path.isfile(candidate):
+				bao = candidate
+				break
 
-		return get_bench_path()
-	except Exception:
-		cwd = os.getcwd()
-		while cwd != "/":
-			if os.path.isdir(os.path.join(cwd, "sites")):
-				return cwd
-			cwd = os.path.dirname(cwd)
-		return os.getcwd()
+	if bao:
+		return bao
+
+	# Not found anywhere — download the pre-built binary from GitHub releases.
+	click.echo("'bao' not found. Downloading OpenBao from GitHub releases...")
+	try:
+		req = urllib.request.Request(
+			"https://api.github.com/repos/openbao/openbao/releases/latest",
+			headers={"Accept": "application/vnd.github+json"},
+		)
+		with urllib.request.urlopen(req, timeout=15) as r:
+			release = json.loads(r.read())
+
+		tag = release["tag_name"]
+		version = tag.lstrip("v")
+
+		# Linux releases ship as .tar.gz (not .zip — that's Windows only).
+		# The filename uses a capitalised OS name, e.g. bao_2.5.1_Linux_x86_64.tar.gz.
+		# Exclude the HSM variant (bao-hsm_*).
+		tar_url = None
+		tar_name = None
+		for asset in release.get("assets", []):
+			name = asset["name"]
+			name_lower = name.lower()
+			if (
+				name_lower.endswith(".tar.gz")
+				and name_lower.startswith("bao_")
+				and "linux" in name_lower
+				and ("x86_64" in name_lower or "amd64" in name_lower)
+			):
+				tar_url = asset["browser_download_url"]
+				tar_name = name
+				break
+
+		if not tar_url:
+			asset_names = [a["name"] for a in release.get("assets", [])]
+			raise RuntimeError(f"No Linux x86_64 tar.gz asset in release {tag}. Available: {asset_names}")
+
+		click.echo(f"Downloading {tar_name} ...")
+		tar_path = f"/tmp/bao_{version}.tar.gz"
+		urllib.request.urlretrieve(tar_url, tar_path)
+
+		extract_dir = f"/tmp/bao_{version}_extract"
+		os.makedirs(extract_dir, exist_ok=True)
+		with tarfile.open(tar_path, "r:gz") as tf:
+			# Find the bao binary inside the archive
+			binary_member = next(
+				(m for m in tf.getmembers() if m.name in ("bao", "./bao") or m.name.endswith("/bao")),
+				None,
+			)
+			if not binary_member:
+				raise RuntimeError(f"No bao binary in tarball. Contents: {[m.name for m in tf.getmembers()]}")
+			binary_member.name = os.path.basename(binary_member.name)
+			tf.extract(binary_member, extract_dir)
+
+		dest = "/usr/local/bin/bao"
+		subprocess.run(["sudo", "mv", os.path.join(extract_dir, "bao"), dest], check=True)
+		subprocess.run(["sudo", "chmod", "+x", dest], check=True)
+		click.echo(f"OpenBao {version} installed to {dest}.")
+		return dest
+
+	except Exception as e:
+		click.echo(f"Error: could not install OpenBao automatically: {e}", err=True)
+		click.echo("Install manually: https://openbao.org/docs/install", err=True)
+		raise SystemExit(1)
+
+
+def reset_openbao_config(bench_path: str) -> None:
+	"""Remove all OpenBao config files and clean up process manager entries."""
+	config_dir = os.path.join(bench_path, "config")
+
+	# Config files
+	for name in ("openbao.hcl", "openbao-seal.key", "openbao-recovery-keys.txt"):
+		path = os.path.join(config_dir, name)
+		if os.path.exists(path):
+			os.remove(path)
+			click.echo(f"Removed {path}")
+
+	# Data directory
+	data_dir = os.path.join(config_dir, "openbao-data")
+	if os.path.exists(data_dir):
+		shutil.rmtree(data_dir)
+		click.echo(f"Removed {data_dir}")
+
+	# Remove [program:openbao] block from bench supervisor.conf
+	bench_sup_conf = os.path.join(bench_path, "config", "supervisor.conf")
+	if os.path.exists(bench_sup_conf):
+		content = open(bench_sup_conf).read()
+		if "[program:openbao]" in content:
+			# Strip the block: everything from the [program:openbao] line to the
+			# next blank line that precedes a new [section] or end-of-file.
+			cleaned = re.sub(r"\n\[program:openbao\][^\[]*", "", content)
+			with open(bench_sup_conf, "w") as f:
+				f.write(cleaned)
+			click.echo(f"Removed [program:openbao] from {bench_sup_conf}")
+
+	# Remove Procfile entry
+	procfile = os.path.join(bench_path, "Procfile")
+	if os.path.exists(procfile):
+		lines = [l for l in open(procfile).readlines() if not l.startswith("openbao:")]
+		with open(procfile, "w") as f:
+			f.writelines(lines)
 
 
 def write_file_secure(path: str, content: str, mode: int = 0o600) -> None:
@@ -44,7 +153,13 @@ def write_file_secure(path: str, content: str, mode: int = 0o600) -> None:
 		os.close(fd)
 
 
-def generate_openbao_config(seal_key_path: str, data_path: str) -> str:
+def generate_openbao_config(seal_key: str, data_path: str) -> str:
+	"""Generate openbao.hcl content.
+
+	Args:
+	    seal_key: Raw 64-char hex key value (not a file path) for the static seal.
+	    data_path: Absolute path to the storage data directory.
+	"""
 	return f"""# OpenBao configuration for Frappe Vault
 # Generated by: bench setup-openbao
 # Documentation: https://openbao.org/docs/configuration
@@ -60,10 +175,11 @@ listener "tcp" {{
   tls_disable = true  # TLS handled by nginx reverse proxy
 }}
 
-# Static seal — OpenBao unseals automatically on restart
+# Static seal — OpenBao unseals automatically on restart using this inline key.
+# The key is also saved to config/openbao-seal.key for disaster recovery.
 seal "static" {{
   current_key_id = "frappe-vault-1"
-  current_key = "file://{seal_key_path}"
+  current_key    = "{seal_key}"
 }}
 
 api_addr = "http://127.0.0.1:8200"
@@ -71,12 +187,17 @@ api_addr = "http://127.0.0.1:8200"
 
 
 def check_openbao_health(vault_addr: str) -> bool:
-	"""Return True if OpenBao is responding at vault_addr."""
-	try:
-		import urllib.request
+	"""Return True if OpenBao is responding at vault_addr.
 
+	urllib.request raises HTTPError for non-2xx responses, so we catch it
+	explicitly — OpenBao returns 501 when uninitialized and 503 when sealed,
+	both of which mean it is running and reachable.
+	"""
+	try:
 		with urllib.request.urlopen(f"{vault_addr}/v1/sys/health", timeout=2) as r:
 			return r.status in (200, 429, 472, 473, 501, 503)
+	except urllib.error.HTTPError as e:
+		return e.code in (200, 429, 472, 473, 501, 503)
 	except Exception:
 		return False
 
@@ -92,8 +213,6 @@ def wait_for_openbao_health(vault_addr: str, timeout: int = 30) -> bool:
 
 def check_openbao_initialized(vault_addr: str) -> bool:
 	try:
-		import urllib.request
-
 		with urllib.request.urlopen(f"{vault_addr}/v1/sys/init", timeout=5) as r:
 			return json.loads(r.read()).get("initialized", False)
 	except Exception:
@@ -112,13 +231,15 @@ def init_openbao(vault_addr: str) -> dict:
 
 
 def enable_kv_v2(vault_addr: str, token: str) -> None:
-	subprocess.run(
+	"""Enable the KV v2 secrets engine at secret/. Safe to call if already enabled."""
+	result = subprocess.run(
 		["bao", "secrets", "enable", "-path=secret", "kv-v2"],
 		env={**os.environ, "BAO_ADDR": vault_addr, "BAO_TOKEN": token},
 		capture_output=True,
 		text=True,
-		check=True,
 	)
+	if result.returncode != 0 and "path is already in use" not in result.stderr:
+		raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout, result.stderr)
 
 
 def list_sites(bench_path: str) -> list[str]:
@@ -142,7 +263,6 @@ def update_site_config(bench_path: str, site: str, vault_addr: str, token: str) 
 		{
 			"vault_url": vault_addr,
 			"vault_token": token,
-			"enable_vault_secrets": True,
 		}
 	)
 	with open(config_path, "w") as f:
@@ -150,60 +270,79 @@ def update_site_config(bench_path: str, site: str, vault_addr: str, token: str) 
 
 
 def detect_production(bench_path: str) -> bool:
-	"""Return True when this bench is managed by supervisor."""
-	bench_name = os.path.basename(bench_path)
-	candidates = [
-		f"/etc/supervisor/conf.d/{bench_name}.conf",
-		"/etc/supervisor/conf.d/frappe-bench.conf",
-		"/etc/supervisor/conf.d/frappe_bench.conf",
-	]
-	return any(os.path.exists(p) for p in candidates)
+	"""Return True when this bench is managed by supervisor.
+
+	Frappe bench's production setup writes a single supervisor.conf inside the
+	bench's config/ directory (not a file per program in /etc/supervisor/conf.d/).
+	That file is then [include]d by the system supervisord.conf.
+	"""
+	bench_sup_conf = os.path.join(bench_path, "config", "supervisor.conf")
+	return os.path.exists(bench_sup_conf)
 
 
 def setup_supervisor_config(bench_path: str, config_path: str) -> bool:
-	"""Write OpenBao supervisor program config and reload supervisor.
+	"""Append an OpenBao program block to the bench supervisor.conf.
 
-	Returns True on success, False if sudo is required but unavailable.
+	Frappe bench manages a single config/supervisor.conf that supervisord
+	includes.  We append to that file (owned by the bench user, no sudo needed)
+	instead of writing a separate system-wide file.
+
+	Returns True on success, False on error.
 	"""
-	bao_bin = shutil.which("bao") or "/usr/bin/bao"
-	sup_config = f"""[program:openbao]
+	bench_sup_conf = os.path.join(bench_path, "config", "supervisor.conf")
+
+	# Already present — nothing to do.
+	try:
+		if "[program:openbao]" in open(bench_sup_conf).read():
+			click.echo("OpenBao already present in supervisor.conf.")
+			return True
+	except FileNotFoundError:
+		pass
+
+	bao_bin = shutil.which("bao")
+	if not bao_bin:
+		# Common install locations when not on PATH
+		for candidate in ("/usr/local/bin/bao", "/usr/bin/bao", "/opt/openbao/bin/bao"):
+			if os.path.isfile(candidate):
+				bao_bin = candidate
+				break
+	if not bao_bin:
+		click.echo(
+			"Error: 'bao' binary not found. Install OpenBao and ensure it is on PATH.",
+			err=True,
+		)
+		return False
+
+	log_dir = os.path.join(bench_path, "logs")
+	os.makedirs(log_dir, exist_ok=True)
+
+	block = f"""
+[program:openbao]
 command={bao_bin} server -config={config_path}
+priority=1
 autostart=true
 autorestart=true
 directory={bench_path}
-stdout_logfile=/var/log/openbao/openbao.log
-stderr_logfile=/var/log/openbao/openbao-error.log
+stdout_logfile={log_dir}/openbao.log
+stderr_logfile={log_dir}/openbao.error.log
+user={os.environ.get("USER", "frappe")}
+startretries=10
 """
-	sup_path = "/etc/supervisor/conf.d/openbao.conf"
 
-	# Create log directory
 	try:
-		subprocess.run(["sudo", "mkdir", "-p", "/var/log/openbao"], check=True, capture_output=True)
-	except Exception:
-		os.makedirs("/var/log/openbao", exist_ok=True)
+		with open(bench_sup_conf, "a") as f:
+			f.write(block)
+	except Exception as e:
+		click.echo(f"Warning: could not update {bench_sup_conf}: {e}", err=True)
+		return False
 
-	# Write config — direct if root, else via sudo tee
-	try:
-		with open(sup_path, "w") as f:
-			f.write(sup_config)
-	except PermissionError:
-		try:
-			subprocess.run(
-				["sudo", "tee", sup_path],
-				input=sup_config,
-				capture_output=True,
-				text=True,
-				check=True,
-			)
-		except Exception as e:
-			click.echo(f"Warning: could not write {sup_path}: {e}", err=True)
-			return False
-
-	# Reload supervisor
+	# Inform supervisord about the new program entry so it manages OpenBao
+	# on future restarts.  The actual first-run start is handled by
+	# start_background() in the main setup flow.
 	try:
 		subprocess.run(["sudo", "supervisorctl", "reread"], check=True, capture_output=True)
 		subprocess.run(["sudo", "supervisorctl", "update"], check=True, capture_output=True)
-		click.echo(f"Supervisor config written: {sup_path}")
+		click.echo(f"OpenBao added to supervisor config: {bench_sup_conf}")
 		return True
 	except Exception as e:
 		click.echo(f"Warning: could not reload supervisor: {e}", err=True)
@@ -226,15 +365,6 @@ def setup_procfile_entry(bench_path: str) -> None:
 		with open(procfile_path, "w") as f:
 			f.write(entry)
 	click.echo("Added OpenBao to Procfile.")
-
-
-def start_via_supervisor() -> bool:
-	try:
-		subprocess.run(["sudo", "supervisorctl", "start", "openbao"], check=True, capture_output=True)
-		return True
-	except Exception as e:
-		click.echo(f"Warning: could not start OpenBao via supervisor: {e}", err=True)
-		return False
 
 
 def start_background(config_path: str) -> None:
@@ -264,15 +394,24 @@ def start_background(config_path: str) -> None:
 	default=False,
 	help="Write supervisor config instead of Procfile entry",
 )
-def setup_openbao(site=None, production=False):
-	"""Full OpenBao setup: config, process manager, init, KV engine, and site config.
+@click.option(
+	"--reset",
+	is_flag=True,
+	default=False,
+	help="Remove all existing OpenBao config and start completely fresh",
+)
+def setup_openbao(site=None, production=False, reset=False):
+	"""Full OpenBao setup: binary, config, process manager, init, KV engine, and site config.
 
 	For development benches this adds OpenBao to the Procfile (bench start).
 	For production benches (auto-detected via supervisor config, or --production flag)
-	this writes a supervisor program config and starts OpenBao immediately.
+	this writes to the bench supervisor.conf and starts OpenBao immediately.
 
-	If the bench has exactly one site and --site is omitted, vault_url, vault_token,
-	and enable_vault_secrets are written to that site's site_config.json automatically.
+	If the bench has exactly one site and --site is omitted, vault_url and vault_token
+	are written to that site's site_config.json automatically. Feature flags such as
+	vault_secrets_api_enabled must be set explicitly by an administrator.
+
+	Use --reset to wipe all existing OpenBao config files and start completely fresh.
 	"""
 	vault_addr = "http://127.0.0.1:8200"
 	bench_path = get_bench_path()
@@ -282,17 +421,32 @@ def setup_openbao(site=None, production=False):
 	seal_key_path = os.path.join(config_dir, "openbao-seal.key")
 
 	# ------------------------------------------------------------------
+	# Step 0: Ensure bao binary is available; optionally reset state
+	# ------------------------------------------------------------------
+	if reset:
+		click.echo("Resetting OpenBao configuration...")
+		reset_openbao_config(bench_path)
+
+	ensure_bao_binary()
+
+	# ------------------------------------------------------------------
 	# Step 1: Generate config files
 	# ------------------------------------------------------------------
 	if os.path.exists(config_path):
 		click.echo(f"Using existing config: {config_path}")
 	else:
-		key = secrets.token_hex(32)
+		# Reuse an existing seal key if one was kept (e.g. reset without --reset),
+		# otherwise generate a fresh one.
+		if os.path.exists(seal_key_path):
+			key = open(seal_key_path).read().strip()
+			click.echo(f"Reusing existing seal key: {seal_key_path}")
+		else:
+			key = secrets.token_hex(32)
+			write_file_secure(seal_key_path, key + "\n", mode=0o600)
+			click.echo(f"Seal key: {seal_key_path}")
 		os.makedirs(data_dir, mode=0o700, exist_ok=True)
-		write_file_secure(seal_key_path, key + "\n", mode=0o600)
-		write_file_secure(config_path, generate_openbao_config(seal_key_path, data_dir), mode=0o644)
+		write_file_secure(config_path, generate_openbao_config(key, data_dir), mode=0o644)
 		click.echo(f"Config:   {config_path}")
-		click.echo(f"Seal key: {seal_key_path}")
 		click.echo(f"Data dir: {data_dir}")
 
 	# ------------------------------------------------------------------
@@ -311,10 +465,11 @@ def setup_openbao(site=None, production=False):
 		click.echo("OpenBao is already running.")
 	else:
 		click.echo("Starting OpenBao...")
-		if use_production:
-			start_via_supervisor()
-		else:
-			start_background(config_path)
+		# Always start the process directly in the background for the initial
+		# setup — this is reliable regardless of how supervisord is wired up.
+		# The supervisor / Procfile entry registered above ensures it is
+		# managed (auto-restart, start on boot) from this point forward.
+		start_background(config_path)
 
 		click.echo("Waiting for OpenBao to be ready...", nl=False)
 		if not wait_for_openbao_health(vault_addr, timeout=30):
@@ -370,8 +525,7 @@ def setup_openbao(site=None, production=False):
 	else:
 		click.echo("\nAdd the following to your site_config.json:")
 		click.echo(f'  "vault_url": "{vault_addr}",')
-		click.echo(f'  "vault_token": "{root_token}",')
-		click.echo('  "enable_vault_secrets": true')
+		click.echo(f'  "vault_token": "{root_token}"')
 
 	click.echo("\nOpenBao setup complete.")
 
@@ -415,15 +569,17 @@ def vault_status(context):
 
 	try:
 		click.echo(f"Site: {site}")
-		click.echo(f"enable_vault_secrets:       {frappe.conf.get('enable_vault_secrets', False)}")
 		click.echo(
-			f"enable_vault_user_passwords: {frappe.conf.get('enable_vault_user_passwords', False)}"
+			f"vault_password_fields_enabled: {frappe.conf.get('vault_password_fields_enabled', False)}"
 		)
-		click.echo(f"vault_url:                  {frappe.conf.get('vault_url', 'not set')}")
-		click.echo(f"vault_proxy_enabled:        {frappe.conf.get('vault_proxy_enabled', False)}")
-		click.echo(f"vault_secrets_api_enabled:  {frappe.conf.get('vault_secrets_api_enabled', False)}")
-
-		from frappe_vault.vault_client import get_vault_client
+		click.echo(
+			f"enable_vault_user_passwords:   {frappe.conf.get('enable_vault_user_passwords', False)}"
+		)
+		click.echo(
+			f"vault_secrets_api_enabled:     {frappe.conf.get('vault_secrets_api_enabled', False)}"
+		)
+		click.echo(f"vault_url:                     {frappe.conf.get('vault_url', 'not set')}")
+		click.echo(f"vault_proxy_enabled:           {frappe.conf.get('vault_proxy_enabled', False)}")
 
 		try:
 			client = get_vault_client()
@@ -458,8 +614,6 @@ def migrate_passwords_to_vault(context, dry_run=False, skip_backup=False):
 	frappe.init(site=site)
 	frappe.connect()
 
-	from frappe_vault.install import migrate_passwords_to_vault as do_migrate
-
 	try:
 		do_migrate(dry_run=dry_run, skip_backup=skip_backup)
 	finally:
@@ -480,8 +634,6 @@ def restore_auth_backup(context, backup_file):
 	frappe.init(site=site)
 	frappe.connect()
 
-	from frappe_vault.install import restore_auth_backup as do_restore
-
 	try:
 		do_restore(backup_file)
 	finally:
@@ -501,8 +653,6 @@ def cleanup_migrated_passwords(context, confirm=False):
 	site = get_site(context)
 	frappe.init(site=site)
 	frappe.connect()
-
-	from frappe_vault.install import cleanup_migrated_passwords as do_cleanup
 
 	try:
 		do_cleanup(confirm=confirm)

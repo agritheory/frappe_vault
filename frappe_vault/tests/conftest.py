@@ -9,12 +9,11 @@ from unittest.mock import MagicMock
 import frappe
 import pytest
 from frappe.utils import get_bench_path
+from frappe.utils.logger import get_logger as frappe_get_logger
 
 
 def get_logger(*args, **kwargs):
-	from frappe.utils.logger import get_logger
-
-	return get_logger(
+	return frappe_get_logger(
 		module=None,
 		with_more_info=False,
 		allow_site=True,
@@ -61,8 +60,9 @@ def patch_vault_conf(monkeymodule):
 	vault_url and vault_token are taken from site config by default.
 	Set BAO_ADDR/BAO_TOKEN (or VAULT_ADDR/VAULT_TOKEN) env vars to override.
 	"""
-	monkeymodule.setitem(frappe.conf, "vault_secrets_api_enabled", True)
+	monkeymodule.setitem(frappe.conf, "vault_password_fields_enabled", True)
 	monkeymodule.setitem(frappe.conf, "enable_vault_user_passwords", True)
+	monkeymodule.setitem(frappe.conf, "vault_secrets_api_enabled", True)
 	monkeymodule.setitem(frappe.conf, "vault_proxy_enabled", True)
 
 	url_override = os.environ.get("BAO_ADDR") or os.environ.get("VAULT_ADDR")
