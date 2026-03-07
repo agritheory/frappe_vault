@@ -87,7 +87,27 @@ environment=BAO_TOKEN="bao.xxxxxxxxxxxxx"
 
 See [OpenBao Setup Guide](./openbao-setup.md) for more configuration options.
 
-10. **Set the admin password**:
+If OpenBao is managed by supervisor with environment-based seal key, also configure the OpenBao program:
+```ini
+[program:openbao]
+command=/usr/bin/bao server -config=/etc/openbao/config.hcl
+autostart=true
+autorestart=true
+user=openbao
+stdout_logfile=/var/log/openbao/openbao.log
+stderr_logfile=/var/log/openbao/openbao-error.log
+environment=HOME="/etc/openbao",BAO_SEAL_KEY="<64-char-hex-key>"
+```
+
+See [OpenBao Setup Guide](./openbao-setup.md) for generating the seal key and configuration options.
+
+7. **Reload supervisor**:
+```shell
+sudo supervisorctl reread
+sudo supervisorctl update
+```
+
+8. **Set the admin password**:
 ```shell
 bench --site {{ site name }} set-admin-password {{ secure password }}
 ```
