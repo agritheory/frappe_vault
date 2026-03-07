@@ -81,7 +81,7 @@ def create_vault_secrets():
 	Parent folder docs (is_folder=1) are created via _ensure_folder_chain before
 	each secret so the folder tree is fully populated for permission tests.
 	"""
-	from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import _ensure_folder_chain
+	from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import ensure_folder_chain
 
 	secrets = [
 		# Root level
@@ -247,7 +247,7 @@ def create_vault_secrets():
 			continue
 
 		# Create parent folder chain first so the Link field resolves correctly
-		_ensure_folder_chain(path)
+		ensure_folder_chain(path)
 		parent_folder = "/".join(path.split("/")[:-1]) if "/" in path else None
 
 		doc = frappe.new_doc("Vault Secret")

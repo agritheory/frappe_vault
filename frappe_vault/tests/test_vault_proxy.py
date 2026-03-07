@@ -61,7 +61,7 @@ def mock_get_request():
 	return frappe.local.request
 
 
-def _last_activity_log(user, subject_fragment):
+def last_activity_log(user, subject_fragment):
 	"""Return the most recent Activity Log entry matching user and subject fragment."""
 	results = frappe.get_all(
 		"Activity Log",
@@ -122,42 +122,42 @@ def test_user_without_allowed_role_denied(proxy_enabled):
 
 
 # ---------------------------------------------------------------------------
-# _kv_path_from_api_path()
+# kv_path_from_api_path()
 # ---------------------------------------------------------------------------
 
 
 def test_kv_path_from_api_path_data():
-	assert vault_proxy._kv_path_from_api_path("/v1/secret/data/foo/bar") == "foo/bar"
+	assert vault_proxy.kv_path_from_api_path("/v1/secret/data/foo/bar") == "foo/bar"
 
 
 def test_kv_path_from_api_path_metadata():
-	assert vault_proxy._kv_path_from_api_path("/v1/secret/metadata/foo/bar") == "foo/bar"
+	assert vault_proxy.kv_path_from_api_path("/v1/secret/metadata/foo/bar") == "foo/bar"
 
 
 def test_kv_path_from_api_path_other():
-	assert vault_proxy._kv_path_from_api_path("/v1/sys/health") is None
+	assert vault_proxy.kv_path_from_api_path("/v1/sys/health") is None
 
 
 def test_kv_path_from_api_path_top_level_data():
-	assert vault_proxy._kv_path_from_api_path("/v1/secret/data/mykey") == "mykey"
+	assert vault_proxy.kv_path_from_api_path("/v1/secret/data/mykey") == "mykey"
 
 
 # ---------------------------------------------------------------------------
-# _vault_secret_name_for_path()
+# vault_secret_name_for_path()
 # ---------------------------------------------------------------------------
 
 
 def test_vault_secret_name_for_path_not_site_namespaced():
 	"""Paths that don't start with frappe/{site}/ always return None."""
-	assert vault_proxy._vault_secret_name_for_path("myapp/api_key") is None
-	assert vault_proxy._vault_secret_name_for_path("/v1/secret/data/foo") is None
+	assert vault_proxy.vault_secret_name_for_path("myapp/api_key") is None
+	assert vault_proxy.vault_secret_name_for_path("/v1/secret/data/foo") is None
 
 
 def test_vault_secret_name_for_path_no_doc(monkeypatch):
 	"""Site-namespaced path with no matching Vault Secret doc returns None."""
 	monkeypatch.setattr(frappe.db, "exists", lambda *a, **kw: None)
 	path = f"frappe/{frappe.local.site}/no-such/secret"
-	assert vault_proxy._vault_secret_name_for_path(path) is None
+	assert vault_proxy.vault_secret_name_for_path(path) is None
 
 
 def test_vault_secret_name_for_path_with_doc(monkeypatch):
@@ -165,7 +165,7 @@ def test_vault_secret_name_for_path_with_doc(monkeypatch):
 	relative = "customers/acme/api_key"
 	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name: name)
 	path = f"frappe/{frappe.local.site}/{relative}"
-	result = vault_proxy._vault_secret_name_for_path(path)
+	result = vault_proxy.vault_secret_name_for_path(path)
 	assert result == relative
 
 
@@ -210,7 +210,7 @@ def test_require_secret_permission_with_doc_denied(proxy_enabled, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _ensure_vault_secret()
+# ensure_vault_secret()
 # ---------------------------------------------------------------------------
 
 
@@ -218,9 +218,9 @@ def test_ensure_vault_secret_non_site_path_is_noop(monkeypatch):
 	"""Non-site-namespaced paths are silently ignored."""
 	created = []
 	monkeypatch.setattr(frappe.db, "exists", lambda *a, **kw: None)
-	with patch("frappe_vault.vault_proxy._vault_secret_name_for_path", return_value=None):
+	with patch("frappe_vault.vault_proxy.vault_secret_name_for_path", return_value=None):
 		with patch("frappe_vault.vault_proxy.frappe.new_doc") as mock_new_doc:
-			vault_proxy._ensure_vault_secret("myapp/api_key")
+			vault_proxy.ensure_vault_secret("myapp/api_key")
 			mock_new_doc.assert_not_called()
 
 
@@ -228,9 +228,9 @@ def test_ensure_vault_secret_already_exists_is_noop(monkeypatch):
 	"""If a doc already exists, _ensure_vault_secret does nothing."""
 	relative = "customers/acme/api_key"
 	kv_path = f"frappe/{frappe.local.site}/{relative}"
-	with patch("frappe_vault.vault_proxy._vault_secret_name_for_path", return_value=relative):
+	with patch("frappe_vault.vault_proxy.vault_secret_name_for_path", return_value=relative):
 		with patch("frappe_vault.vault_proxy.frappe.new_doc") as mock_new_doc:
-			vault_proxy._ensure_vault_secret(kv_path)
+			vault_proxy.ensure_vault_secret(kv_path)
 			mock_new_doc.assert_not_called()
 
 
@@ -241,12 +241,12 @@ def test_ensure_vault_secret_creates_doc_and_folder_chain(monkeypatch):
 
 	# _ensure_folder_chain is imported locally inside _ensure_vault_secret to
 	# avoid a circular import, so patch it at the source module.
-	with patch("frappe_vault.vault_proxy._vault_secret_name_for_path", return_value=None), patch(
+	with patch("frappe_vault.vault_proxy.vault_secret_name_for_path", return_value=None), patch(
 		"frappe_vault.frappe_vault.doctype.vault_secret.vault_secret._ensure_folder_chain"
 	) as mock_chain, patch("frappe_vault.vault_proxy.frappe.new_doc") as mock_new_doc:
 		mock_doc = MagicMock()
 		mock_new_doc.return_value = mock_doc
-		vault_proxy._ensure_vault_secret(kv_path)
+		vault_proxy.ensure_vault_secret(kv_path)
 
 	mock_chain.assert_called_once_with(relative)
 	mock_new_doc.assert_called_once_with("Vault Secret")
@@ -262,7 +262,7 @@ def test_ensure_vault_secret_creates_doc_and_folder_chain(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_proxy_write_calls_ensure_vault_secret(proxy_enabled, monkeypatch):
+def test_proxy_write_callsensure_vault_secret(proxy_enabled, monkeypatch):
 	"""POST to a KV data path triggers _ensure_vault_secret."""
 	frappe.set_user(VAULT_ADMIN)
 	relative = f"{frappe.local.site}/myapp/api_key"
@@ -275,7 +275,7 @@ def test_proxy_write_calls_ensure_vault_secret(proxy_enabled, monkeypatch):
 	mock_client = MagicMock()
 	mock_client._make_request.return_value = mock_response
 
-	with patch("frappe_vault.vault_proxy._ensure_vault_secret") as mock_ensure, patch(
+	with patch("frappe_vault.vault_proxy.ensure_vault_secret") as mock_ensure, patch(
 		"frappe_vault.vault_proxy.require_secret_permission"
 	), patch("frappe_vault.vault_proxy.get_vault_client", return_value=mock_client):
 		vault_proxy.proxy_request(f"/v1/secret/data/{kv_path}", "POST", "{}")
@@ -294,7 +294,7 @@ def test_proxy_get_does_not_call_ensure(proxy_enabled, monkeypatch):
 	mock_client = MagicMock()
 	mock_client._make_request.return_value = mock_response
 
-	with patch("frappe_vault.vault_proxy._ensure_vault_secret") as mock_ensure, patch(
+	with patch("frappe_vault.vault_proxy.ensure_vault_secret") as mock_ensure, patch(
 		"frappe_vault.vault_proxy.require_secret_permission"
 	), patch("frappe_vault.vault_proxy.get_vault_client", return_value=mock_client):
 		vault_proxy.proxy_request("/v1/secret/data/frappe/myapp/key", "GET")
@@ -411,7 +411,7 @@ def test_health_logs_correct_user(proxy_enabled):
 	with patch("frappe_vault.vault_proxy.get_vault_client", return_value=mock_client):
 		vault_proxy.health()
 
-	log = _last_activity_log(VAULT_ADMIN, "health_check")
+	log = last_activity_log(VAULT_ADMIN, "health_check")
 	assert log is not None
 	assert log["user"] == VAULT_ADMIN
 	assert log["reference_name"] == VAULT_ADMIN
@@ -467,7 +467,7 @@ def test_list_secrets_logs_correct_user(proxy_enabled):
 	with patch("frappe_vault.vault_proxy.get_vault_client", return_value=mock_client):
 		vault_proxy.list_secrets("frappe")
 
-	log = _last_activity_log(VAULT_ADMIN, "list_secrets")
+	log = last_activity_log(VAULT_ADMIN, "list_secrets")
 	assert log is not None
 	assert log["user"] == VAULT_ADMIN
 
@@ -575,7 +575,7 @@ def test_proxy_request_logs_correct_user(proxy_enabled):
 	with patch("frappe_vault.vault_proxy.get_vault_client", return_value=mock_client):
 		vault_proxy.proxy_request("/v1/secret/data/test", "GET")
 
-	log = _last_activity_log(VAULT_ADMIN, "proxy_request")
+	log = last_activity_log(VAULT_ADMIN, "proxy_request")
 	assert log is not None
 	assert log["user"] == VAULT_ADMIN
 	content = json.loads(log["content"])
@@ -599,7 +599,7 @@ def test_delete_secret_logs_correct_user(proxy_enabled):
 	with patch("frappe_vault.vault_proxy.get_vault_client", return_value=mock_client):
 		vault_proxy.delete_secret("frappe/User/test/password")
 
-	log = _last_activity_log(VAULT_ADMIN, "delete_secret")
+	log = last_activity_log(VAULT_ADMIN, "delete_secret")
 	assert log is not None
 	assert log["user"] == VAULT_ADMIN
 
@@ -697,7 +697,7 @@ def test_renderer_logs_correct_user(proxy_enabled, mock_get_request):
 	with patch("frappe_vault.vault_api_renderer.get_vault_client", return_value=mock_client):
 		render("v1/sys/health")
 
-	log = _last_activity_log(VAULT_ADMIN, "health_check")
+	log = last_activity_log(VAULT_ADMIN, "health_check")
 	assert log is not None
 	assert log["user"] == VAULT_ADMIN
 

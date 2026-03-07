@@ -4,7 +4,7 @@ For license information, please see license.txt-->
 # Frappe Vault Site Configuration
 
 <div class="byline">
-  Tyler Matteson 2026-01-17
+  Tyler Matteson 2026-03-07
 </div>
 
 
@@ -521,6 +521,40 @@ cleanup_migrated_passwords(confirm=True)
 
 Frappe Vault provides bench commands for managing the integration.
 
+### setup-openbao
+
+Full automated OpenBao setup — config files, process manager registration, initialisation, KV engine, and site config. Run once after installing the app.
+
+```shell
+# Development (adds to Procfile, starts OpenBao in background):
+bench setup-openbao
+
+# Production (writes supervisor config, starts via supervisorctl):
+bench setup-openbao --production
+
+# Specify a site to update (auto-detected when bench has exactly one site):
+bench setup-openbao --site {site}
+bench setup-openbao --production --site {site}
+```
+
+**What it does:**
+1. Generates `config/openbao.hcl`, `config/openbao-seal.key`, and `config/openbao-data/`
+2. **Dev**: adds `openbao: bench run-openbao` to the Procfile. **Production**: writes `/etc/supervisor/conf.d/openbao.conf` and reloads supervisor
+3. Starts OpenBao and polls until healthy
+4. Initialises OpenBao; saves recovery keys to `config/openbao-recovery-keys.txt` (0600)
+5. Enables the KV v2 secrets engine at `secret/`
+6. Writes `vault_url`, `vault_token`, and `enable_vault_secrets: true` to `{site}/site_config.json`
+
+If any step has already been completed (e.g. OpenBao is already running or already initialised) that step is skipped automatically.
+
+### run-openbao
+
+Start the OpenBao server process. This command is invoked by `bench start` via the Procfile entry added by `bench setup-openbao`. You do not need to call it directly.
+
+```shell
+bench run-openbao
+```
+
 ### vault-status
 
 Check OpenBao connectivity and configuration status.
@@ -530,7 +564,7 @@ bench --site {site} vault-status
 ```
 
 **Output:**
-- Site configuration (`enable_vault_secrets`, `enable_vault_user_passwords`, etc.)
+- Site configuration (`enable_vault_secrets`, `enable_vault_user_passwords`, `vault_secrets_api_enabled`, `vault_proxy_enabled`)
 - OpenBao connection status (connected/not available)
 - OpenBao health (initialized, sealed status)
 - Count of passwords remaining in `__Auth` table

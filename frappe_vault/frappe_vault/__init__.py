@@ -19,7 +19,7 @@ from frappe_vault.vault_client import VaultError, get_vault_client
 from frappe_vault.vault_proxy import is_vault_secrets_api_enabled, log_vault_access
 
 
-def _check_secrets_api_enabled() -> None:
+def check_secrets_api_enabled() -> None:
 	"""Raise PermissionError if Vault Secrets API is not enabled in site config.
 
 	Set ``vault_secrets_api_enabled: true`` in ``site_config.json`` to permit
@@ -30,7 +30,7 @@ def _check_secrets_api_enabled() -> None:
 		frappe.throw(_("Vault Secrets API is not enabled"), frappe.PermissionError)
 
 
-def _folder_ancestry_has_permission(doc, ptype: str, user: str) -> bool:
+def folder_ancestry_has_permission(doc, ptype: str, user: str) -> bool:
 	"""Check folder ancestry for DocShare-based grants.
 
 	Used as an explicit fallback because Frappe's hook dispatch may be skipped
@@ -40,13 +40,13 @@ def _folder_ancestry_has_permission(doc, ptype: str, user: str) -> bool:
 	if ptype not in ("read", "write", "share"):
 		return False
 	from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import (
-		has_permission as _vault_has_permission,
+		has_permission as vault_has_permission,
 	)
 
-	return _vault_has_permission(doc, ptype, user) is True
+	return vault_has_permission(doc, ptype, user) is True
 
 
-def _effective_permission(doc, ptype: str) -> bool:
+def effective_permission(doc, ptype: str) -> bool:
 	"""Return True if the current user effectively has *ptype* on *doc*.
 
 	Mirrors _check_secret_permission but returns a bool instead of raising,
@@ -57,10 +57,10 @@ def _effective_permission(doc, ptype: str) -> bool:
 		return True
 	if frappe.has_permission("Vault Secret", ptype, doc=doc):
 		return True
-	return _folder_ancestry_has_permission(doc, ptype, user)
+	return folder_ancestry_has_permission(doc, ptype, user)
 
 
-def _check_secret_permission(name: str, ptype: str = "read") -> None:
+def check_secret_permission(name: str, ptype: str = "read") -> None:
 	"""Check if current user has permission on the secret.
 
 	Calls frappe.has_permission (which invokes the vault_secret.has_permission
@@ -83,13 +83,13 @@ def _check_secret_permission(name: str, ptype: str = "read") -> None:
 		return
 
 	doc = frappe.get_doc("Vault Secret", name)
-	if _folder_ancestry_has_permission(doc, ptype, frappe.session.user):
+	if folder_ancestry_has_permission(doc, ptype, frappe.session.user):
 		return
 
 	frappe.throw(_("You don't have permission to access this secret"), frappe.PermissionError)
 
 
-def _get_doc_tags(doctype: str, docname: str) -> list[str]:
+def get_doc_tags(doctype: str, docname: str) -> list[str]:
 	"""Return the list of tags applied to a document.
 
 	Uses raw SQL to avoid frappe.get_all's DocType meta validation step, which
@@ -110,7 +110,7 @@ def _get_doc_tags(doctype: str, docname: str) -> list[str]:
 	return []
 
 
-def _get_user_secrets_filter() -> list:
+def get_user_secrets_filter() -> list:
 	"""Build filter for secrets the user has access to.
 
 	Uses Frappe's permission system with proper precedence:
@@ -146,7 +146,7 @@ def get_secrets(
 	Returns:
 	    List of secret metadata dictionaries
 	"""
-	_check_secrets_api_enabled()
+	check_secrets_api_enabled()
 	filters: list = [["is_folder", "=", 0]]
 
 	if folder:
@@ -188,7 +188,7 @@ def get_secrets(
 	# Use raw SQL to avoid frappe.get_all's DocType meta validation, which can
 	# raise DoesNotExistError in test environments where the meta cache is cold.
 	for secret in accessible_secrets:
-		secret["tags"] = _get_doc_tags("Vault Secret", secret["name"])
+		secret["tags"] = get_doc_tags("Vault Secret", secret["name"])
 
 	# Filter by tag if specified
 	if tag:
@@ -207,8 +207,8 @@ def get_secret(name: str) -> dict[str, Any]:
 	Returns:
 	    Secret metadata dictionary with permissions info
 	"""
-	_check_secrets_api_enabled()
-	_check_secret_permission(name, "read")
+	check_secrets_api_enabled()
+	check_secret_permission(name, "read")
 
 	doc = frappe.get_doc("Vault Secret", name)
 
@@ -221,11 +221,11 @@ def get_secret(name: str) -> dict[str, Any]:
 		"owner": doc.owner,
 		"modified": doc.modified,
 		"modified_by": doc.modified_by,
-		"tags": _get_doc_tags("Vault Secret", doc.name),
+		"tags": get_doc_tags("Vault Secret", doc.name),
 		"permissions": {
-			"read": _effective_permission(doc, "read"),
-			"write": _effective_permission(doc, "write"),
-			"share": _effective_permission(doc, "share"),
+			"read": effective_permission(doc, "read"),
+			"write": effective_permission(doc, "write"),
+			"share": effective_permission(doc, "share"),
 		},
 	}
 
@@ -242,8 +242,8 @@ def reveal_secret(name: str) -> dict[str, Any]:
 	Returns:
 	    Dictionary with the secret value
 	"""
-	_check_secrets_api_enabled()
-	_check_secret_permission(name, "read")
+	check_secrets_api_enabled()
+	check_secret_permission(name, "read")
 
 	doc = frappe.get_doc("Vault Secret", name)
 	value = doc.get_secret_value()
@@ -276,15 +276,15 @@ def create_secret(
 	Returns:
 	    Created secret metadata
 	"""
-	from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import _ensure_folder_chain
+	from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import ensure_folder_chain
 
-	_check_secrets_api_enabled()
+	check_secrets_api_enabled()
 	if isinstance(tags, str):
 		import json
 
 		tags = json.loads(tags) if tags else None
 
-	_ensure_folder_chain(path)
+	ensure_folder_chain(path)
 
 	parent_folder = "/".join(path.split("/")[:-1]) if "/" in path else None
 
@@ -323,8 +323,8 @@ def update_secret(
 	Returns:
 	    Updated secret metadata
 	"""
-	_check_secrets_api_enabled()
-	_check_secret_permission(name, "write")
+	check_secrets_api_enabled()
+	check_secret_permission(name, "write")
 
 	if isinstance(tags, str):
 		import json
@@ -357,8 +357,8 @@ def delete_secret(name: str) -> None:
 	Args:
 	    name: The Vault Secret document name
 	"""
-	_check_secrets_api_enabled()
-	_check_secret_permission(name, "delete")
+	check_secrets_api_enabled()
+	check_secret_permission(name, "delete")
 
 	frappe.delete_doc("Vault Secret", name)
 
@@ -374,7 +374,7 @@ def get_folders() -> list[str]:
 	Returns:
 	    Sorted list of accessible folder path strings
 	"""
-	_check_secrets_api_enabled()
+	check_secrets_api_enabled()
 	user = frappe.session.user
 
 	folders = frappe.get_all(
@@ -408,8 +408,8 @@ def share_secret(
 	    write: Grant write permission (default: 0)
 	    share: Grant share permission (default: 0)
 	"""
-	_check_secrets_api_enabled()
-	_check_secret_permission(name, "share")
+	check_secrets_api_enabled()
+	check_secret_permission(name, "share")
 
 	frappe.share.add(
 		"Vault Secret",
@@ -433,8 +433,8 @@ def get_shared_users(name: str) -> list[dict[str, Any]]:
 	Returns:
 	    List of share records with user and permissions
 	"""
-	_check_secrets_api_enabled()
-	_check_secret_permission(name, "read")
+	check_secrets_api_enabled()
+	check_secret_permission(name, "read")
 
 	shares = frappe.get_all(
 		"DocShare",
@@ -456,8 +456,8 @@ def remove_share(name: str, user: str) -> None:
 	    name: The Vault Secret document name
 	    user: Email of user to remove
 	"""
-	_check_secrets_api_enabled()
-	_check_secret_permission(name, "share")
+	check_secrets_api_enabled()
+	check_secret_permission(name, "share")
 
 	frappe.share.remove("Vault Secret", name, user)
 
@@ -486,8 +486,8 @@ def share_folder(
 	    write: Grant write permission (default: 0)
 	    share: Grant share permission (default: 0)
 	"""
-	_check_secrets_api_enabled()
-	_check_secret_permission(name, "share")
+	check_secrets_api_enabled()
+	check_secret_permission(name, "share")
 
 	if not frappe.db.get_value("Vault Secret", name, "is_folder"):
 		frappe.throw(_("'{0}' is not a folder").format(name), frappe.ValidationError)

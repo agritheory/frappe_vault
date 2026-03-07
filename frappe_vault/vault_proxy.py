@@ -78,7 +78,7 @@ def require_vault_access(func):
 	return wrapper
 
 
-def _vault_secret_name_for_path(kv_path: str) -> str | None:
+def vault_secret_name_for_path(kv_path: str) -> str | None:
 	"""Resolve an OpenBao KV path to the corresponding Vault Secret document name.
 
 	Vault Secret documents use their path as the document name (autoname:
@@ -99,7 +99,7 @@ def _vault_secret_name_for_path(kv_path: str) -> str | None:
 	return frappe.db.exists("Vault Secret", relative)
 
 
-def _kv_path_from_api_path(api_path: str) -> str | None:
+def kv_path_from_api_path(api_path: str) -> str | None:
 	"""Extract the KV path from a full OpenBao API path.
 
 	/v1/secret/data/foo/bar     → foo/bar
@@ -112,7 +112,7 @@ def _kv_path_from_api_path(api_path: str) -> str | None:
 	return None
 
 
-def _ensure_vault_secret(kv_path: str) -> None:
+def ensure_vault_secret(kv_path: str) -> None:
 	"""Get or auto-create the Vault Secret doc for a proxy write path.
 
 	If no document exists yet, creates the parent folder chain then the
@@ -125,7 +125,7 @@ def _ensure_vault_secret(kv_path: str) -> None:
 	Args:
 	    kv_path: OpenBao KV path, e.g. "frappe/{site}/myapp/api_key"
 	"""
-	if _vault_secret_name_for_path(kv_path):
+	if vault_secret_name_for_path(kv_path):
 		return  # Document already exists
 
 	prefix = f"frappe/{frappe.local.site}/"
@@ -134,9 +134,9 @@ def _ensure_vault_secret(kv_path: str) -> None:
 
 	relative = kv_path[len(prefix) :]
 
-	from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import _ensure_folder_chain
+	from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import ensure_folder_chain
 
-	_ensure_folder_chain(relative)
+	ensure_folder_chain(relative)
 
 	parts = relative.split("/")
 	parent_folder = "/".join(parts[:-1]) if len(parts) > 1 else None
@@ -164,7 +164,7 @@ def require_secret_permission(kv_path: str, ptype: str = "read") -> None:
 	Raises:
 	    frappe.PermissionError
 	"""
-	secret_name = _vault_secret_name_for_path(kv_path)
+	secret_name = vault_secret_name_for_path(kv_path)
 	if secret_name:
 		if not frappe.has_permission("Vault Secret", ptype, doc=secret_name):
 			frappe.throw(
@@ -236,7 +236,7 @@ def list_secrets(path: str = "frappe") -> dict[str, Any]:
 	try:
 		client = get_vault_client()
 		api_path = f"/v1/secret/metadata/{path}"
-		response = client._make_request("LIST", api_path)
+		response = client.make_request("LIST", api_path)
 
 		if response.status_code == 404:
 			return {"success": True, "data": {"keys": []}}
@@ -275,7 +275,7 @@ def get_secret_metadata(path: str) -> dict[str, Any]:
 	try:
 		client = get_vault_client()
 		api_path = f"/v1/secret/metadata/{path}"
-		response = client._make_request("GET", api_path)
+		response = client.make_request("GET", api_path)
 
 		if response.status_code == 404:
 			return {"success": False, "error": "Secret not found"}
@@ -314,7 +314,7 @@ def delete_secret(path: str) -> dict[str, Any]:
 	try:
 		client = get_vault_client()
 		api_path = f"/v1/secret/metadata/{path}"
-		response = client._make_request("DELETE", api_path)
+		response = client.make_request("DELETE", api_path)
 
 		if response.status_code not in (200, 204, 404):
 			raise VaultError(f"Failed to delete secret: {response.status_code}")
@@ -365,12 +365,12 @@ def proxy_request(path: str, method: str = "GET", data: str | None = None) -> di
 		if path.startswith(blocked):
 			return {"success": False, "error": f"Access to {blocked} is not allowed through proxy"}
 
-	kv_path = _kv_path_from_api_path(path)
+	kv_path = kv_path_from_api_path(path)
 
 	# For writes, ensure the Vault Secret doc (and folder chain) exists first
 	upper_method = method.upper()
 	if upper_method in ("POST", "PUT") and kv_path:
-		_ensure_vault_secret(kv_path)
+		ensure_vault_secret(kv_path)
 
 	# Determine the required permission type
 	if upper_method == "DELETE":
@@ -392,7 +392,7 @@ def proxy_request(path: str, method: str = "GET", data: str | None = None) -> di
 		if data:
 			parsed_data = json.loads(data) if isinstance(data, str) else data
 
-		response = client._make_request(method, path, data=parsed_data)
+		response = client.make_request(method, path, data=parsed_data)
 
 		log_vault_access("proxy_request", path, True, f"method={method}")
 

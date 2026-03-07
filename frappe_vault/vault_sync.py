@@ -203,7 +203,7 @@ def remote_delete_job(remote_name: str, path: str) -> None:
 
 	try:
 		api_path = f"/v1/secret/metadata/{path}"
-		response = client._make_request("DELETE", api_path)
+		response = client.make_request("DELETE", api_path)
 		if response.status_code not in (200, 204, 404):
 			raise VaultError(f"Failed to delete: {response.status_code}")
 	except VaultError as e:
@@ -346,8 +346,8 @@ def compare_and_sync(
 	remote_meta = remote_client.get_secret_metadata(path)
 
 	# Parse timestamps
-	local_time = _parse_timestamp(local_meta.get("updated_time")) if local_meta else None
-	remote_time = _parse_timestamp(remote_meta.get("updated_time")) if remote_meta else None
+	local_time = parse_timestamp(local_meta.get("updated_time")) if local_meta else None
+	remote_time = parse_timestamp(remote_meta.get("updated_time")) if remote_meta else None
 
 	# Both missing - nothing to do
 	if local_time is None and remote_time is None:
@@ -390,7 +390,7 @@ def compare_and_sync(
 	return "skipped"
 
 
-def _parse_timestamp(ts: str | None) -> datetime | None:
+def parse_timestamp(ts: str | None) -> datetime | None:
 	"""
 	Parse an OpenBao/Vault timestamp string to datetime.
 

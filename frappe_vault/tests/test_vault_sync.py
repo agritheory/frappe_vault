@@ -68,7 +68,7 @@ def primary_client():
 	return VaultClient()
 
 
-def _secondary_url_and_token():
+def secondary_url_and_token():
 	configured = (frappe.conf.get("vault_remotes") or [{}])[0]
 	url = os.environ.get("BAO_ADDR_SECONDARY") or configured.get("url") or "http://localhost:8201"
 	token = (
@@ -81,14 +81,14 @@ def _secondary_url_and_token():
 
 @pytest.fixture
 def secondary_client():
-	url, token = _secondary_url_and_token()
+	url, token = secondary_url_and_token()
 	return VaultClient(url=url, token=token)
 
 
 @pytest.fixture
 def patch_sync_enabled(monkeypatch):
 	"""Enable vault_sync_enabled and point vault_remotes at the secondary."""
-	url, token = _secondary_url_and_token()
+	url, token = secondary_url_and_token()
 	monkeypatch.setattr("frappe.conf.vault_sync_enabled", True)
 	monkeypatch.setattr(
 		"frappe.conf.vault_remotes", [{"name": "secondary", "url": url, "token": token}]
@@ -251,7 +251,7 @@ def test_compare_and_sync_pushes_local_only_secret(
 	cleanup_both("SyncTest", "push-only", "field")
 
 	primary_client.set_secret("SyncTest", "push-only", "field", "push-value")
-	path = primary_client._get_secret_path("SyncTest", "push-only", "field").replace(
+	path = primary_client.get_secret_path("SyncTest", "push-only", "field").replace(
 		"/v1/secret/data/", ""
 	)
 
@@ -268,7 +268,7 @@ def test_compare_and_sync_pulls_remote_only_secret(
 	cleanup_both("SyncTest", "pull-only", "field")
 
 	secondary_client.set_secret("SyncTest", "pull-only", "field", "pull-value")
-	path = secondary_client._get_secret_path("SyncTest", "pull-only", "field").replace(
+	path = secondary_client.get_secret_path("SyncTest", "pull-only", "field").replace(
 		"/v1/secret/data/", ""
 	)
 
@@ -291,7 +291,7 @@ def test_compare_and_sync_skips_when_in_sync(
 	# Brief pause to let KV metadata timestamps settle
 	time.sleep(0.1)
 
-	path = primary_client._get_secret_path("SyncTest", "in-sync", "field").replace(
+	path = primary_client.get_secret_path("SyncTest", "in-sync", "field").replace(
 		"/v1/secret/data/", ""
 	)
 
@@ -310,7 +310,7 @@ def test_compare_and_sync_last_write_wins(
 	time.sleep(0.5)
 	secondary_client.set_secret("SyncTest", "lww-test", "field", "newer-value")
 
-	path = primary_client._get_secret_path("SyncTest", "lww-test", "field").replace(
+	path = primary_client.get_secret_path("SyncTest", "lww-test", "field").replace(
 		"/v1/secret/data/", ""
 	)
 

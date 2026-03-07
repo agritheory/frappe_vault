@@ -63,14 +63,14 @@ class VaultClient:
 		# Remove trailing slash from URL
 		self.url = self.url.rstrip("/")
 
-	def _get_headers(self) -> dict[str, str]:
+	def get_headers(self) -> dict[str, str]:
 		"""Return headers for OpenBao API requests."""
 		return {
 			"X-Vault-Token": self.token,
 			"Content-Type": "application/json",
 		}
 
-	def _make_request(
+	def make_request(
 		self,
 		method: str,
 		path: str,
@@ -100,7 +100,7 @@ class VaultClient:
 			response = requests.request(
 				method=method,
 				url=url,
-				headers=self._get_headers(),
+				headers=self.get_headers(),
 				json=data,
 				timeout=timeout,
 			)
@@ -117,7 +117,7 @@ class VaultClient:
 
 		return response
 
-	def _get_secret_path(self, doctype: str, name: str, fieldname: str) -> str:
+	def get_secret_path(self, doctype: str, name: str, fieldname: str) -> str:
 		"""
 		Generate the OpenBao path for a secret.
 
@@ -159,8 +159,8 @@ class VaultClient:
 		    VaultAuthError: If authentication fails
 		    VaultError: For other OpenBao errors
 		"""
-		path = self._get_secret_path(doctype, name, fieldname)
-		response = self._make_request("GET", path)
+		path = self.get_secret_path(doctype, name, fieldname)
+		response = self.make_request("GET", path)
 
 		if response.status_code == 404:
 			return None
@@ -186,9 +186,9 @@ class VaultClient:
 		    VaultAuthError: If authentication fails
 		    VaultError: For other OpenBao errors
 		"""
-		path = self._get_secret_path(doctype, name, fieldname)
+		path = self.get_secret_path(doctype, name, fieldname)
 		data = {"data": {"value": value}}
-		response = self._make_request("POST", path, data=data)
+		response = self.make_request("POST", path, data=data)
 
 		if response.status_code not in (200, 204):
 			raise VaultError(f"Failed to set secret: {response.status_code} {response.text}")
@@ -207,8 +207,8 @@ class VaultClient:
 		    VaultAuthError: If authentication fails
 		    VaultError: For other OpenBao errors
 		"""
-		path = self._get_secret_path(doctype, name, fieldname)
-		response = self._make_request("DELETE", path)
+		path = self.get_secret_path(doctype, name, fieldname)
+		response = self.make_request("DELETE", path)
 
 		# 404 is acceptable for delete (secret may not exist)
 		if response.status_code not in (200, 204, 404):
@@ -225,7 +225,7 @@ class VaultClient:
 		    VaultConnectionError: If OpenBao is unreachable
 		"""
 		try:
-			response = self._make_request("GET", "/v1/sys/health")
+			response = self.make_request("GET", "/v1/sys/health")
 			return response.json()
 		except VaultAuthError:
 			# Health endpoint doesn't require auth, but may return different codes
@@ -262,7 +262,7 @@ class VaultClient:
 		    VaultError: For other OpenBao errors
 		"""
 		api_path = f"/v1/secret/metadata/{path}"
-		response = self._make_request("GET", api_path)
+		response = self.make_request("GET", api_path)
 
 		if response.status_code == 404:
 			return None
@@ -289,7 +289,7 @@ class VaultClient:
 		    VaultError: For other OpenBao errors
 		"""
 		api_path = f"/v1/secret/data/{path}"
-		response = self._make_request("GET", api_path)
+		response = self.make_request("GET", api_path)
 
 		if response.status_code == 404:
 			return None
@@ -316,7 +316,7 @@ class VaultClient:
 		    VaultError: For other OpenBao errors
 		"""
 		api_path = f"/v1/secret/data/{path}"
-		response = self._make_request("POST", api_path, data={"data": data})
+		response = self.make_request("POST", api_path, data={"data": data})
 
 		if response.status_code not in (200, 204):
 			raise VaultError(f"Failed to set secret: {response.status_code} {response.text}")
@@ -341,7 +341,7 @@ class VaultClient:
 		    VaultError: For other OpenBao errors
 		"""
 		api_path = f"/v1/secret/metadata/{path}"
-		response = self._make_request("LIST", api_path)
+		response = self.make_request("LIST", api_path)
 
 		if response.status_code == 404:
 			return []

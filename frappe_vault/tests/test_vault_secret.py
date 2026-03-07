@@ -59,7 +59,7 @@ def vault_client():
 	return VaultClient()
 
 
-def _raw_vault_path(path):
+def raw_vault_path(path):
 	"""Build the OpenBao path used by VaultSecret._write_to_vault."""
 	return f"frappe/{frappe.local.site}/{path}"
 
@@ -78,8 +78,8 @@ def cleanup_secret(vault_client):
 		if frappe.db.exists("Vault Secret", name):
 			frappe.delete_doc("Vault Secret", name, ignore_permissions=True, force=True)
 		try:
-			raw_path = f"/v1/secret/metadata/{_raw_vault_path(path)}"
-			vault_client._make_request("DELETE", raw_path)
+			raw_path = f"/v1/secret/metadata/{raw_vault_path(path)}"
+			vault_client.make_request("DELETE", raw_path)
 		except VaultError:
 			pass
 
@@ -208,7 +208,7 @@ def test_create_and_reveal_secret(cleanup_secret, vault_client):
 	assert revealed["value"] == value
 
 	# Confirm directly in OpenBao
-	raw = vault_client.get_secret_with_metadata(_raw_vault_path(path))
+	raw = vault_client.get_secret_with_metadata(raw_vault_path(path))
 	assert raw is not None
 	assert raw.get("data", {}).get("value") == value
 
@@ -247,7 +247,7 @@ def test_update_secret_changes_value(cleanup_secret, vault_client):
 	revealed = reveal_secret(name)
 	assert revealed["value"] == updated_value
 
-	raw = vault_client.get_secret_with_metadata(_raw_vault_path(path))
+	raw = vault_client.get_secret_with_metadata(raw_vault_path(path))
 	assert raw.get("data", {}).get("value") == updated_value
 
 
@@ -277,12 +277,12 @@ def test_delete_secret_removes_from_openbao(cleanup_secret, vault_client):
 	result = create_secret(title="Delete Test Secret", path=path, value=value)
 	name = result["name"]
 
-	raw_before = vault_client.get_secret_with_metadata(_raw_vault_path(path))
+	raw_before = vault_client.get_secret_with_metadata(raw_vault_path(path))
 	assert raw_before is not None
 
 	delete_secret(name)
 
-	raw_after = vault_client.get_secret_with_metadata(_raw_vault_path(path))
+	raw_after = vault_client.get_secret_with_metadata(raw_vault_path(path))
 	assert raw_after is None
 
 	assert not frappe.db.exists("Vault Secret", name)
@@ -432,7 +432,7 @@ def secrets_api_disabled(monkeypatch):
 	monkeypatch.setitem(frappe.conf, "enable_vault_secrets", False)
 
 
-def test_secrets_api_disabled_blocks_get_secrets(secrets_api_disabled):
+def testsecrets_api_disabled_blocks_get_secrets(secrets_api_disabled):
 	"""All API calls raise PermissionError when vault_secrets_api_enabled is False."""
 	frappe.set_user(VAULT_ADMIN)
 
@@ -440,14 +440,14 @@ def test_secrets_api_disabled_blocks_get_secrets(secrets_api_disabled):
 		get_secrets()
 
 
-def test_secrets_api_disabled_blocks_create(secrets_api_disabled):
+def testsecrets_api_disabled_blocks_create(secrets_api_disabled):
 	frappe.set_user(VAULT_ADMIN)
 
 	with pytest.raises(frappe.PermissionError):
 		create_secret(title="Blocked", path="blocked/test", value="x")
 
 
-def test_secrets_api_disabled_blocks_get_folders(secrets_api_disabled):
+def testsecrets_api_disabled_blocks_get_folders(secrets_api_disabled):
 	frappe.set_user(VAULT_ADMIN)
 
 	with pytest.raises(frappe.PermissionError):
