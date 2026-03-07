@@ -56,6 +56,9 @@ def install_openbao():
 	OpenBao is an open-source fork of HashiCorp Vault (MPL-2.0 licensed)
 	governed by the Open Source Security Foundation (OpenSSF).
 	See: https://openbao.org
+
+	Tries apt first (if the repo is reachable), then falls back to downloading
+	the binary directly from GitHub releases.
 	"""
 	if check_openbao_installed():
 		print("OpenBao is already installed.")
@@ -70,9 +73,10 @@ def install_openbao():
 	if not has_sudo_permissions:
 		pwd = getpass("Provide sudo password to install OpenBao: ")
 
+	# --- Try apt first ---------------------------------------------------
+	apt_ok = False
 	try:
-		# Add OpenBao GPG key and repository
-		print("Adding OpenBao repository...")
+		print("Trying apt install...")
 		commands = [
 			"sudo -S apt-get update",
 			"sudo -S apt-get install -y gpg coreutils wget",
@@ -80,7 +84,6 @@ def install_openbao():
 			'echo "deb [signed-by=/usr/share/keyrings/openbao-archive-keyring.gpg] https://apt.releases.openbao.org $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/openbao.list',
 			"sudo -S apt-get update",
 		]
-
 		for cmd in commands:
 			kwargs = dict(
 				shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8"
@@ -90,24 +93,52 @@ def install_openbao():
 			result = subprocess.run(cmd, **kwargs)
 			if result.returncode != 0 and "already exists" not in result.stderr:
 				print(f"Warning: {result.stderr}")
+				break
+		else:
+			out, err = install_package("openbao", pwd)
+			if err and "already" not in err.lower():
+				print(f"apt install error: {err}")
+			apt_ok = check_openbao_installed()
+	except Exception as e:
+		print(f"apt install failed: {e}")
 
-		# Install openbao
-		out, err = install_package("openbao", pwd)
-		if err and "already" not in err.lower():
-			print(f"There was an error installing OpenBao: {err}")
-		if out:
-			print(f"OpenBao installation: {out}")
+	if apt_ok:
+		print("OpenBao installed successfully via apt.")
+		return
+
+	# --- Fall back to GitHub binary download ----------------------------
+	print("apt unavailable; downloading OpenBao binary from GitHub releases...")
+	try:
+		import json
+		import urllib.request
+		import zipfile
+
+		api_url = "https://api.github.com/repos/openbao/openbao/releases/latest"
+		with urllib.request.urlopen(api_url, timeout=10) as r:
+			tag = json.loads(r.read())["tag_name"]  # e.g. "v2.0.3"
+		version = tag.lstrip("v")
+
+		zip_url = (
+			f"https://github.com/openbao/openbao/releases/download/{tag}" f"/bao_{version}_linux_amd64.zip"
+		)
+		print(f"Downloading {zip_url} ...")
+		zip_path = f"/tmp/bao_{version}_linux_amd64.zip"
+		urllib.request.urlretrieve(zip_url, zip_path)
+
+		with zipfile.ZipFile(zip_path, "r") as zf:
+			zf.extract("bao", "/tmp/bao_extract")
+
+		dest = "/usr/local/bin/bao"
+		subprocess.run(["sudo", "mv", "/tmp/bao_extract/bao", dest], check=True)
+		subprocess.run(["sudo", "chmod", "+x", dest], check=True)
 
 		if check_openbao_installed():
-			print("OpenBao installed successfully.")
+			print(f"OpenBao {version} installed to {dest}.")
 		else:
-			print(
-				"OpenBao installation may have failed. Please install manually:\n"
-				"https://openbao.org/docs/install"
-			)
+			print("Download succeeded but 'bao' still not found — check PATH.")
 
 	except Exception as e:
-		print(f"There was an error installing OpenBao: {e}")
+		print(f"GitHub download failed: {e}")
 		print("Please install OpenBao manually: https://openbao.org/docs/install")
 
 
