@@ -99,7 +99,7 @@ def proxy(method: str, vault_path: str, body: dict | None = None) -> Response:
 	"""Call OpenBao and return a Werkzeug Response mirroring the result."""
 	try:
 		client = get_vault_client()
-		vault_response = client._make_request(method, vault_path, data=body)
+		vault_response = client.make_request(method, vault_path, data=body)
 	except VaultConnectionError as e:
 		audit(vault_path, False, str(e))
 		return json_response({"errors": [f"OpenBao unreachable: {e}"]}, 503)

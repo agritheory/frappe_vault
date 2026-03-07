@@ -20,7 +20,7 @@ Requires a running OpenBao instance (BAO_TOKEN / VAULT_TOKEN).
 import frappe
 import pytest
 
-from frappe_vault import _original_set_encrypted_password
+from frappe_vault import original_set_encrypted_password
 from frappe_vault.install import migrate_passwords_to_vault
 from frappe_vault.vault_client import VaultClient, VaultError, reset_vault_client
 
@@ -109,14 +109,14 @@ def test_set_encrypted_password_stores_plaintext_in_vault(
 def test_non_user_password_field_migration(monkeypatch, vault_client, cleanup_auth_and_vault):
 	"""A Password field written to __Auth while vault was off migrates to OpenBao.
 
-	_original_set_encrypted_password bypasses the monkey-patch so the value lands
+	original_set_encrypted_password bypasses the monkey-patch so the value lands
 	in __Auth as a Fernet-encrypted blob (normal Frappe behavior). After migration
 	that encrypted blob is present in OpenBao at the standard namespaced path.
 	"""
 	monkeypatch.setitem(frappe.conf, "enable_vault_secrets", False)
 
 	# Write directly to __Auth, bypassing the vault patch
-	_original_set_encrypted_password(_TEST_DOCTYPE, _TEST_DOC_NAME, _TEST_SECRET_VALUE, _TEST_FIELD)
+	original_set_encrypted_password(_TEST_DOCTYPE, _TEST_DOC_NAME, _TEST_SECRET_VALUE, _TEST_FIELD)
 
 	# Confirm the value is in __Auth
 	Auth = frappe.qb.Table("__Auth")
@@ -149,7 +149,7 @@ def test_migration_skips_already_migrated(monkeypatch, vault_client, cleanup_aut
 	monkeypatch.setitem(frappe.conf, "enable_vault_user_passwords", True)
 
 	# Write to __Auth directly
-	_original_set_encrypted_password(_TEST_DOCTYPE, _TEST_DOC_NAME, _TEST_SECRET_VALUE, _TEST_FIELD)
+	original_set_encrypted_password(_TEST_DOCTYPE, _TEST_DOC_NAME, _TEST_SECRET_VALUE, _TEST_FIELD)
 
 	# First migration
 	first = migrate_passwords_to_vault(skip_backup=True)

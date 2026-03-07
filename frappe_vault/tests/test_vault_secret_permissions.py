@@ -7,7 +7,7 @@ Tests for the Vault Secret permission model.
 Covers:
   - has_permission hook: folder ancestry walk via DocShare
   - get_permission_query_conditions: folder tree expansion for SQL
-  - _ensure_folder_chain: auto-creation of parent folder docs
+  - ensure_folder_chain: auto-creation of parent folder docs
   - get_folders: permission-filtered folder listing
   - share_folder: folder validation and DocShare creation
 
@@ -23,8 +23,8 @@ import pytest
 
 from frappe_vault.frappe_vault import get_folders, share_folder
 from frappe_vault.frappe_vault.doctype.vault_secret.vault_secret import (
-	_ensure_folder_chain,
-	_expand_folder_descendants,
+	ensure_folder_chain,
+	expand_folder_descendants,
 	get_permission_query_conditions,
 	has_permission,
 )
@@ -38,19 +38,19 @@ NO_ACCESS = "no-access@vault.test"
 # ---------------------------------------------------------------------------
 
 
-def _make_doc(folder=None, is_folder=0, name="some/secret"):
+def make_doc(folder=None, is_folder=0, name="some/secret"):
 	"""Build a minimal Vault Secret-like namespace for has_permission calls."""
 	return SimpleNamespace(folder=folder, is_folder=is_folder, name=name)
 
 
-def _secrets_api_enabled(monkeypatch):
+def secrets_api_enabled(monkeypatch):
 	monkeypatch.setattr(
 		"frappe_vault.frappe_vault.doctype.vault_secret.vault_secret.is_vault_secrets_api_enabled",
 		lambda: True,
 	)
 
 
-def _secrets_api_disabled(monkeypatch):
+def secrets_api_disabled(monkeypatch):
 	monkeypatch.setattr(
 		"frappe_vault.frappe_vault.doctype.vault_secret.vault_secret.is_vault_secrets_api_enabled",
 		lambda: False,
@@ -64,8 +64,8 @@ def _secrets_api_disabled(monkeypatch):
 
 def test_has_permission_blocked_when_api_disabled(monkeypatch):
 	"""has_permission returns False for any user when the API is disabled."""
-	_secrets_api_disabled(monkeypatch)
-	doc = _make_doc()
+	secrets_api_disabled(monkeypatch)
+	doc = make_doc()
 	assert has_permission(doc, "read", VAULT_ADMIN) is False
 
 
@@ -76,8 +76,8 @@ def test_has_permission_blocked_when_api_disabled(monkeypatch):
 
 def test_has_permission_no_folder_falls_through(monkeypatch):
 	"""A secret with no folder returns None (fall through to Frappe role checks)."""
-	_secrets_api_enabled(monkeypatch)
-	doc = _make_doc(folder=None)
+	secrets_api_enabled(monkeypatch)
+	doc = make_doc(folder=None)
 	with patch.object(frappe.db, "get_value", return_value=None):
 		result = has_permission(doc, "read", NO_ACCESS)
 	assert result is None
@@ -90,8 +90,8 @@ def test_has_permission_no_folder_falls_through(monkeypatch):
 
 def test_folder_share_grants_access_to_child_secret(monkeypatch):
 	"""DocShare on the direct parent folder grants read on the child secret."""
-	_secrets_api_enabled(monkeypatch)
-	doc = _make_doc(folder="deploy", name="deploy/api_key")
+	secrets_api_enabled(monkeypatch)
+	doc = make_doc(folder="deploy", name="deploy/api_key")
 
 	# First call: look for DocShare on "deploy" → found (returns a truthy name)
 	# Second call would be to get the parent folder of "deploy", but we stop early
@@ -103,8 +103,8 @@ def test_folder_share_grants_access_to_child_secret(monkeypatch):
 
 def test_folder_share_write_grants_write(monkeypatch):
 	"""DocShare with write=1 on a folder grants write on child secrets."""
-	_secrets_api_enabled(monkeypatch)
-	doc = _make_doc(folder="deploy", name="deploy/db_password")
+	secrets_api_enabled(monkeypatch)
+	doc = make_doc(folder="deploy", name="deploy/db_password")
 
 	with patch.object(frappe.db, "get_value", return_value="DocShare-002"):
 		result = has_permission(doc, "write", NO_ACCESS)
@@ -119,9 +119,9 @@ def test_folder_share_write_grants_write(monkeypatch):
 
 def test_folder_share_grants_access_at_depth(monkeypatch):
 	"""DocShare on a grandparent folder grants access to a deeply nested secret."""
-	_secrets_api_enabled(monkeypatch)
+	secrets_api_enabled(monkeypatch)
 	# Secret is at customers/acme/deploy/api_key; folder = customers/acme/deploy
-	doc = _make_doc(folder="customers/acme/deploy", name="customers/acme/deploy/api_key")
+	doc = make_doc(folder="customers/acme/deploy", name="customers/acme/deploy/api_key")
 
 	# Simulate: no share on "customers/acme/deploy", no share on "customers/acme",
 	# but share found on "customers"
@@ -156,8 +156,8 @@ def test_folder_share_grants_access_at_depth(monkeypatch):
 
 def test_folder_share_revocation_denies_access(monkeypatch):
 	"""If no ancestor folder has a DocShare for the user, return None (not True)."""
-	_secrets_api_enabled(monkeypatch)
-	doc = _make_doc(folder="customers/acme/deploy", name="customers/acme/deploy/api_key")
+	secrets_api_enabled(monkeypatch)
+	doc = make_doc(folder="customers/acme/deploy", name="customers/acme/deploy/api_key")
 
 	def fake_get_value(doctype, filters_or_name, fieldname):
 		if doctype == "DocShare":
@@ -189,7 +189,7 @@ def test_expand_folder_descendants_single_level(monkeypatch):
 		return []
 
 	with patch.object(frappe, "get_all", side_effect=fake_get_all):
-		result = _expand_folder_descendants(["deploy"])
+		result = expand_folder_descendants(["deploy"])
 
 	assert "deploy" in result
 	assert "deploy/a" in result
@@ -217,7 +217,7 @@ def test_expand_folder_descendants_deep(monkeypatch):
 		return result
 
 	with patch.object(frappe, "get_all", side_effect=fake_get_all):
-		result = _expand_folder_descendants(["root"])
+		result = expand_folder_descendants(["root"])
 
 	assert result == {"root", "root/a", "root/b", "root/a/x"}
 
@@ -229,13 +229,13 @@ def test_expand_folder_descendants_deep(monkeypatch):
 
 def test_permission_query_conditions_disabled(monkeypatch):
 	"""API disabled → always return '1=0'."""
-	_secrets_api_disabled(monkeypatch)
+	secrets_api_disabled(monkeypatch)
 	assert get_permission_query_conditions(NO_ACCESS) == "1=0"
 
 
 def test_permission_query_conditions_no_shares(monkeypatch):
 	"""No DocShares for user → empty string (no extra restriction)."""
-	_secrets_api_enabled(monkeypatch)
+	secrets_api_enabled(monkeypatch)
 	with patch.object(frappe, "get_all", return_value=[]):
 		result = get_permission_query_conditions(NO_ACCESS)
 	assert result == ""
@@ -243,7 +243,7 @@ def test_permission_query_conditions_no_shares(monkeypatch):
 
 def test_permission_query_conditions_folder_expansion(monkeypatch):
 	"""Folders shared with user are expanded and emitted as a SQL IN clause."""
-	_secrets_api_enabled(monkeypatch)
+	secrets_api_enabled(monkeypatch)
 
 	def fake_get_all(doctype, filters=None, pluck=None, **kw):
 		if doctype == "DocShare":
@@ -295,7 +295,7 @@ def test_ensure_folder_chain_creates_missing_folders(monkeypatch):
 	with patch.object(frappe.db, "exists", side_effect=fake_exists), patch.object(
 		frappe, "new_doc", side_effect=fake_new_doc
 	):
-		_ensure_folder_chain("customers/acme/deploy/api_key")
+		ensure_folder_chain("customers/acme/deploy/api_key")
 
 	# Should create 3 folders: customers, customers/acme, customers/acme/deploy
 	assert len(created_docs) == 3
@@ -342,7 +342,7 @@ def test_ensure_folder_chain_skips_existing(monkeypatch):
 	with patch.object(frappe.db, "exists", side_effect=fake_exists), patch.object(
 		frappe, "new_doc", side_effect=fake_new_doc
 	):
-		_ensure_folder_chain("customers/acme/key")
+		ensure_folder_chain("customers/acme/key")
 
 	# Only "customers/acme" should be created; "customers" existed
 	assert created_docs == ["customers/acme"]
@@ -351,7 +351,7 @@ def test_ensure_folder_chain_skips_existing(monkeypatch):
 def test_ensure_folder_chain_flat_path_no_folders(monkeypatch):
 	"""A single-segment path (no parent) creates no folder docs."""
 	with patch.object(frappe, "new_doc") as mock_new_doc:
-		_ensure_folder_chain("top_level_secret")
+		ensure_folder_chain("top_level_secret")
 	mock_new_doc.assert_not_called()
 
 
@@ -417,7 +417,7 @@ def test_share_folder_validates_is_folder(monkeypatch):
 	)
 	frappe.set_user(VAULT_ADMIN)
 
-	with patch("frappe_vault.frappe_vault._check_secret_permission"), patch.object(
+	with patch("frappe_vault.frappe_vault.check_secret_permission"), patch.object(
 		frappe.db, "get_value", return_value=0  # is_folder = 0
 	):
 		with pytest.raises(frappe.ValidationError):
@@ -434,7 +434,7 @@ def test_share_folder_calls_frappe_share_add(monkeypatch):
 
 	# frappe.share is a submodule; patch its .add function directly so the test
 	# doesn't depend on whether the submodule is already imported as an attribute.
-	with patch("frappe_vault.frappe_vault._check_secret_permission"), patch.object(
+	with patch("frappe_vault.frappe_vault.check_secret_permission"), patch.object(
 		frappe.db, "get_value", return_value=1  # is_folder = 1
 	), patch("frappe.share.add") as mock_add, patch("frappe_vault.frappe_vault.log_vault_access"):
 		share_folder("deploy", NO_ACCESS, read=1, write=0, share=0)

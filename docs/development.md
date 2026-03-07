@@ -4,7 +4,7 @@ For license information, please see license.txt-->
 # Frappe Vault Developer Setup
 
 <div class="byline">
-  Tyler Matteson 2026-01-17
+  Tyler Matteson 2026-03-07
 </div>
 
 
@@ -72,26 +72,26 @@ wget https://github.com/openbao/openbao/releases/download/v${VERSION}/bao-hsm_${
 sudo dpkg -i bao-hsm_${VERSION}_linux_amd64.deb
 ```
 
-8. **Set up OpenBao for development**:
+8. **Set up OpenBao** (installs the app first if not done above):
 ```shell
+bench --site {{ site name }} install-app frappe_vault
 bench setup-openbao
 ```
 
-This interactive command will:
-- Create OpenBao configuration with auto-unseal
-- Add OpenBao to your Procfile
-- Configure audit logging
+`bench setup-openbao` does everything in one step:
+- Generates `config/openbao.hcl` and `config/openbao-seal.key` (static auto-unseal)
+- Adds `openbao: bench run-openbao` to the Procfile
+- Starts OpenBao and waits for it to be ready
+- Initialises OpenBao and saves recovery keys to `config/openbao-recovery-keys.txt` (0600)
+- Enables the KV v2 secrets engine at `secret/`
+- Writes `vault_url`, `vault_token`, and `enable_vault_secrets: true` to the site config
 
 9. **Launch your bench**:
 ```shell
 bench start
 ```
 
-On first start, OpenBao will automatically:
-- Initialize itself
-- Save the root token to your site config
-- Enable the kv-v2 secrets engine
-- Display the recovery key (save this somewhere safe)
+OpenBao is started automatically on each `bench start` via the Procfile entry added in the previous step.
 
 10. **Set the admin password** (will be stored in OpenBao):
 ```shell
@@ -102,8 +102,9 @@ bench --site {{ site name }} set-admin-password admin
 
 If you need to start fresh with OpenBao:
 ```shell
-# Stop bench first, then:
-bench remove-openbao --confirm
+# Stop bench first, then remove the generated config files:
+rm -rf config/openbao.hcl config/openbao-seal.key config/openbao-data config/openbao-recovery-keys.txt
+# Remove the Procfile entry, then re-run setup:
 bench setup-openbao
 bench start
 ```

@@ -42,12 +42,12 @@ class VaultSecret(Document):
 			return
 
 		if self.flags.get("secret_value") is not None:
-			self._write_to_vault(self.flags.secret_value)
+			self.write_to_vault(self.flags.secret_value)
 			return
 
 		password_value = self.get_password("secret_value", raise_exception=False)
 		if password_value:
-			self._write_to_vault(password_value)
+			self.write_to_vault(password_value)
 
 	def on_trash(self):
 		"""Delete secret from OpenBao when document is deleted. Skipped for folders."""
@@ -57,13 +57,13 @@ class VaultSecret(Document):
 		try:
 			client = get_vault_client()
 			api_path = f"/v1/secret/metadata/frappe/{frappe.local.site}/{self.path}"
-			client._make_request("DELETE", api_path)
+			client.make_request("DELETE", api_path)
 			log_vault_access("delete_secret", self.path, True)
 		except VaultError as e:
 			log_vault_access("delete_secret", self.path, False, str(e))
 			frappe.log_error(f"Failed to delete secret from OpenBao: {e}", "Vault Secret Deletion")
 
-	def _write_to_vault(self, value: str) -> None:
+	def write_to_vault(self, value: str) -> None:
 		"""Write secret value to OpenBao."""
 		try:
 			client = get_vault_client()
@@ -110,7 +110,7 @@ class VaultSecret(Document):
 		return frappe.has_permission("Vault Secret", ptype, doc=doc, user=user)
 
 
-def _expand_folder_descendants(folder_names: list[str]) -> set[str]:
+def expand_folder_descendants(folder_names: list[str]) -> set[str]:
 	"""Expand a set of folder names to include all their descendant folders.
 
 	BFS through the Vault Secret tree collecting child folder names reachable
@@ -131,7 +131,7 @@ def _expand_folder_descendants(folder_names: list[str]) -> set[str]:
 	return result
 
 
-def _ensure_folder_chain(relative_path: str) -> None:
+def ensure_folder_chain(relative_path: str) -> None:
 	"""Ensure all parent folder documents exist for the given relative path.
 
 	Creates missing Vault Secret folder docs for each path segment, working
@@ -225,6 +225,6 @@ def get_permission_query_conditions(user: str) -> str:
 		return ""
 
 	# Expand to all descendant folders so nested secrets are included
-	all_folders = _expand_folder_descendants(folder_docs)
+	all_folders = expand_folder_descendants(folder_docs)
 	escaped = ", ".join(frappe.db.escape(f) for f in all_folders)
 	return f"`tabVault Secret`.`folder` IN ({escaped})"

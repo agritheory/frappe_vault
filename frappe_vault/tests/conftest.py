@@ -11,7 +11,7 @@ import pytest
 from frappe.utils import get_bench_path
 
 
-def _get_logger(*args, **kwargs):
+def get_logger(*args, **kwargs):
 	from frappe.utils.logger import get_logger
 
 	return get_logger(
@@ -33,7 +33,7 @@ def monkeymodule():
 
 @pytest.fixture(scope="session", autouse=True)
 def db_instance():
-	frappe.logger = _get_logger
+	frappe.logger = get_logger
 
 	sites = Path(get_bench_path()) / "sites"
 	currentsite = "test_site"

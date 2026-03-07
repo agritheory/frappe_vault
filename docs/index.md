@@ -4,7 +4,7 @@ For license information, please see license.txt-->
 # Frappe Vault Documentation
 
 <div class="byline">
-  Tyler Matteson 2026-01-17
+  Tyler Matteson 2026-03-07
 </div>
 
 
@@ -78,12 +78,14 @@ bench get-app frappe_vault https://github.com/agritheory/frappe_vault.git
 bench --site {site} install-app frappe_vault
 ```
 
-3. **Set up OpenBao** (automatic configuration):
+3. **Set up OpenBao** (full automated configuration):
 ```shell
 bench setup-openbao
 ```
 
-4. **Start your bench** (OpenBao auto-initializes on first run):
+`bench setup-openbao` handles everything in one step: creates the config and seal key, adds OpenBao to the Procfile, starts the server, initialises it, enables the KV v2 secrets engine, and writes the connection details to your site config. Recovery keys are saved to `config/openbao-recovery-keys.txt`.
+
+4. **Start your bench**:
 ```shell
 bench start
 ```
@@ -92,11 +94,6 @@ bench start
 ```shell
 bench --site {site} set-admin-password {password}
 ```
-
-That's it! The `bench setup-openbao` command handles all configuration automatically:
-- Creates OpenBao config with auto-unseal
-- Adds OpenBao to your Procfile
-- On first `bench start`, initializes OpenBao and saves the token to your site configval
 
 For production setup, see the [Production Environment Setup](./production.md) guide.
 

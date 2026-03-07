@@ -11,10 +11,10 @@ from frappe.utils.password import passlibctx
 from frappe_vault.vault_client import VaultClient, VaultError, get_vault_client
 
 # Store original functions
-_original_get_decrypted_password = frappe.utils.password.get_decrypted_password
-_original_set_encrypted_password = frappe.utils.password.set_encrypted_password
-_original_update_password = frappe.utils.password.update_password
-_original_check_password = frappe.utils.password.check_password
+original_get_decrypted_password = frappe.utils.password.get_decrypted_password
+original_set_encrypted_password = frappe.utils.password.set_encrypted_password
+original_update_password = frappe.utils.password.update_password
+original_check_password = frappe.utils.password.check_password
 
 
 def is_vault_enabled() -> bool:
@@ -84,7 +84,7 @@ def patched_get_decrypted_password(
 	    frappe.AuthenticationError: If Vault is unavailable (when raise_exception=True)
 	"""
 	if not is_field_vault_enabled(doctype, fieldname):
-		return _original_get_decrypted_password(doctype, name, fieldname, raise_exception)
+		return original_get_decrypted_password(doctype, name, fieldname, raise_exception)
 
 	try:
 		client = get_vault_client()
@@ -138,7 +138,7 @@ def patched_set_encrypted_password(
 	    frappe.ValidationError: If Vault is unavailable
 	"""
 	if not is_field_vault_enabled(doctype, fieldname):
-		return _original_set_encrypted_password(doctype, name, pwd, fieldname)
+		return original_set_encrypted_password(doctype, name, pwd, fieldname)
 
 	try:
 		from frappe_vault.vault_sync import sync_write
@@ -214,7 +214,7 @@ def patched_update_password(
 	    logout_all_sessions: Whether to logout all other sessions
 	"""
 	if not is_vault_user_passwords_enabled():
-		return _original_update_password(user, pwd, doctype, fieldname, logout_all_sessions)
+		return original_update_password(user, pwd, doctype, fieldname, logout_all_sessions)
 
 	try:
 		hashed_pwd = passlibctx.hash(pwd)
@@ -279,7 +279,7 @@ def patched_check_password(
 	    frappe.AuthenticationError: If password is incorrect or Vault unavailable
 	"""
 	if not is_vault_user_passwords_enabled():
-		return _original_check_password(user, pwd, doctype, fieldname, delete_tracker_cache)
+		return original_check_password(user, pwd, doctype, fieldname, delete_tracker_cache)
 
 	try:
 		client = get_vault_client()

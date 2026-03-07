@@ -6,13 +6,13 @@ import frappe
 VAULT_HEALTH_CACHE_TTL = 30  # seconds
 
 
-def _any_vault_feature_enabled() -> bool:
+def any_vault_feature_enabled() -> bool:
 	return bool(
 		frappe.conf.get("enable_vault_secrets") or frappe.conf.get("enable_vault_user_passwords")
 	)
 
 
-def _vault_available_cached() -> bool:
+def vault_available_cached() -> bool:
 	"""
 	Return OpenBao availability, cached per site for VAULT_HEALTH_CACHE_TTL seconds.
 
@@ -50,8 +50,8 @@ def before_request() -> None:
 	if frappe.local.path != "login":
 		return
 
-	if not _any_vault_feature_enabled():
+	if not any_vault_feature_enabled():
 		return
 
-	if not _vault_available_cached():
+	if not vault_available_cached():
 		frappe.redirect("/vault-unavailable")
