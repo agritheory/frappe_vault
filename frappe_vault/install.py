@@ -31,8 +31,23 @@ def install_package(module, pwd=""):
 
 
 def check_openbao_installed():
-	"""Check if bao command is available."""
-	return shutil.which("bao") is not None
+	"""Check if bao command is available OR OpenBao server is reachable via HTTP.
+
+	The HTTP check covers CI environments where OpenBao runs as a Docker
+	service on localhost but the bao binary is not installed.
+	"""
+	if shutil.which("bao") is not None:
+		return True
+	try:
+		import urllib.request
+
+		vault_url = frappe.conf.get("vault_url", "http://localhost:8200")
+		with urllib.request.urlopen(f"{vault_url}/v1/sys/health", timeout=2) as r:
+			# OpenBao returns 200/429/472/473/501/503 depending on seal state —
+			# any response means it is running.
+			return r.status in (200, 429, 472, 473, 501, 503)
+	except Exception:
+		return False
 
 
 def install_openbao():
@@ -205,8 +220,7 @@ def backup_auth_table() -> str | None:
 	from datetime import datetime
 
 	# Check if there are any entries to backup
-	Auth = frappe.qb.Table("__Auth")
-	count = (frappe.qb.from_(Auth).select(frappe.qb.functions.Count("*")).run())[0][0]
+	count = frappe.db.sql("SELECT COUNT(*) FROM `__Auth`")[0][0]
 
 	if not count:
 		return None

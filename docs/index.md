@@ -3,6 +3,11 @@ For license information, please see license.txt-->
 
 # Frappe Vault Documentation
 
+<div class="byline">
+  Tyler Matteson 2026-01-17
+</div>
+
+
 Frappe Vault integrates OpenBao with Frappe Framework to provide enterprise-grade secret management for password fields. Instead of storing sensitive data in Frappe's database, secrets are securely stored in a dedicated OpenBao instance with full audit logging capabilities.
 
 ## What is OpenBao?
@@ -34,18 +39,13 @@ This integration is designed to meet compliance requirements for DCAA, CMMC, HIP
 
 ## How It Works
 
-Frappe Vault intercepts Frappe's password storage and retrieval functions, routing them through OpenBao instead of the `__Auth` database table.
+Frappe Vault intercepts Frappe's password storage and retrieval functions, routing them through OpenBao instead of Frappe's `__Auth` database table.
 
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Frappe Code    │────▶│  Frappe Vault    │────▶│  OpenBao        │
-│  (get/set pwd)  │     │  (monkey patch)  │     │                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-                                                        │
-                                                        ▼
-                                                ┌─────────────────┐
-                                                │  Audit Log      │
-                                                └─────────────────┘
+```mermaid
+flowchart LR
+    A["Frappe Code\n(get/set pwd)"] --> B["Frappe Vault\n(monkey patch)"]
+    B --> C["OpenBao"]
+    C --> D["Audit Log"]
 ```
 
 ### Supported Password Types
@@ -57,9 +57,20 @@ Frappe Vault supports two types of password storage:
 | Encrypted Passwords | `enable_vault_secrets` | API keys, secrets, retrievable passwords |
 | User Login Passwords | `enable_vault_user_passwords` | User authentication (hashed) |
 
-## Quick Start
+### Vault Secrets Management
 
-1. **Install OpenBao** (see [OpenBao Setup Guide](./openbao-setup.md))
+Beyond intercepting Frappe's built-in password fields, Frappe Vault also provides an explicit secrets management layer — a `Vault Secret` doctype that lets you store, browse, and share named secrets through the Frappe UI and API.
+
+Secrets are organised in a folder hierarchy (modelled on Frappe's `File` doctype). A folder can be shared with a user via DocShare, granting them read/write access to all secrets inside — without needing a privileged role. See [Vault Secrets Management](./configuration.md#vault-secrets-management) for full details.
+
+| Feature | Config Key |
+|---------|------------|
+| Vault Secrets UI + CRUD API | `vault_secrets_api_enabled` |
+| Generic OpenBao proxy endpoints | `vault_proxy_enabled` |
+
+## Quick Start (Development)
+
+1. **Install OpenBao** (see [OpenBao Setup Guide](./openbao-setup.md) for installation options)
 
 2. **Install the app**:
 ```shell
@@ -67,25 +78,46 @@ bench get-app frappe_vault https://github.com/agritheory/frappe_vault.git
 bench --site {site} install-app frappe_vault
 ```
 
-3. **Configure site_config.json**:
-```json
-{
-  "enable_vault_secrets": true,
-  "enable_vault_user_passwords": true,
-  "vault_url": "http://localhost:8200",
-  "vault_token": "${BAO_TOKEN}"
-}
+3. **Set up OpenBao** (automatic configuration):
+```shell
+bench setup-openbao
 ```
 
-4. **Set admin password** (will be stored in OpenBao):
+4. **Start your bench** (OpenBao auto-initializes on first run):
+```shell
+bench start
+```
+
+5. **Set admin password** (will be stored in OpenBao):
 ```shell
 bench --site {site} set-admin-password {password}
 ```
 
-5. **Verify** by checking the OpenBao audit log or querying OpenBao directly:
-```shell
-bao kv get secret/frappe/User/Administrator/password
-```
+That's it! The `bench setup-openbao` command handles all configuration automatically:
+- Creates OpenBao config with auto-unseal
+- Adds OpenBao to your Procfile
+- On first `bench start`, initializes OpenBao and saves the token to your site configval
+
+For production setup, see the [Production Environment Setup](./production.md) guide.
+
+## Availability
+
+Frappe Vault treats OpenBao as a hard dependency. There is no silent fallback to Frappe's `__Auth` database table under any failure condition — silent fallback would undermine the compliance posture the app exists to enforce.
+
+### Single Instance
+
+When the local OpenBao instance is unreachable:
+
+- The `/login` page redirects to a maintenance screen (`/vault-unavailable`) so users see a clear message before attempting to authenticate
+- All password reads and writes fail with an explicit error
+
+To minimize downtime on a single-instance deployment, keep OpenBao available via static-seal auto-unseal and Supervisor `autorestart`.
+
+### HA / Failover
+
+For high-availability deployments, OpenBao supports [Integrated Storage (Raft)](https://openbao.org/docs/configuration/storage/raft/) clustering. In a Raft cluster, a standby node is automatically promoted if the active node becomes unavailable, and Frappe Vault will resume normal operation once the new leader is reachable.
+
+**Multi-site replication** (`vault_sync`) copies secrets to remote OpenBao nodes asynchronously for disaster recovery purposes. Remote nodes are write targets only — they are not read fallbacks. The local OpenBao instance remains the authoritative target for all reads and writes.
 
 ## Security Considerations
 

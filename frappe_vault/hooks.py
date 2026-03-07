@@ -13,7 +13,6 @@ app_license = "MIT"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/frappe_vault/css/frappe_vault.css"
-# app_include_js = "/assets/frappe_vault/js/frappe_vault.js"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/frappe_vault/css/frappe_vault.css"
@@ -52,13 +51,17 @@ app_license = "MIT"
 # automatically create page for each record of this doctype
 # website_generators = ["Web Page"]
 
-# Website Route Rules
-# -------------------
-# Route /v1/* to the Vault API handler for Vault client compatibility
+# Custom page renderer — handles /v1/* as a transparent OpenBao API proxy.
+# VaultApiRenderer is checked before all built-in renderers and returns a
+# real Werkzeug JSON Response, bypassing Frappe's HTML template engine.
+# The companion rewrite_vault_delete hook rewrites DELETE /v1/* to POST so
+# app.py routes it to get_response() (which is where page renderers run).
 
-website_route_rules = [
-	{"from_route": "/v1/<path:vault_path>", "to_route": "v1"},
-]
+page_renderer = ["frappe_vault.vault_api_renderer.VaultApiRenderer"]
+
+before_request = ["frappe_vault.vault_api_renderer.handle_vault_delete"]
+
+auth_hooks = ["frappe_vault.vault_api_renderer.authenticate_vault_token"]
 
 # Jinja
 # ----------
@@ -110,10 +113,29 @@ after_install = "frappe_vault.install.after_install"
 # permission_query_conditions = {
 # 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
 # }
+
+# Desk permissions — deny access to both doctypes unless vault_secrets_api_enabled
+# is set in site_config.json. This allows the vault to run as a local-only secret
+# store (for monkey-patched passwords, etc.) without exposing the management UI or
+# API to any user, including Administrator.
 #
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
+# Three-layer approach (Frappe bypasses Administrator in has_permission):
+#   1. has_permission       — blocks non-Administrator users at the object level
+#   2. permission_query_conditions — blocks the list view at SQL level (everyone,
+#                             including Administrator, since it's not bypassed)
+#   3. VaultSecret.onload   — blocks form loading for everyone (incl. Administrator)
+has_permission = {
+	"Vault Secret": "frappe_vault.frappe_vault.doctype.vault_secret.vault_secret.has_permission",
+}
+
+permission_query_conditions = {
+	"Vault Secret": "frappe_vault.frappe_vault.doctype.vault_secret.vault_secret.get_permission_query_conditions",
+}
+
+# Website / portal permissions
+has_website_permission = {
+	"Vault Secret": "frappe_vault.frappe_vault.has_website_permission",
+}
 
 # DocType Class
 # ---------------
@@ -127,6 +149,12 @@ after_install = "frappe_vault.install.after_install"
 # ---------------
 # Hook on document methods and events
 
+doc_events = {
+	"Tag": {
+		"before_delete": "frappe_vault.vault_proxy.prevent_tag_delete_if_used_on_secret",
+	}
+}
+
 # doc_events = {
 # 	"*": {
 # 		"on_update": "method",
@@ -137,29 +165,19 @@ after_install = "frappe_vault.install.after_install"
 
 # Scheduled Tasks
 # ---------------
+# Vault sync reconciliation runs at 39 minutes past each hour
+# This offset avoids collision with typical on-the-hour scheduled tasks
 
-# scheduler_events = {
-# 	"all": [
-# 		"frappe_vault.tasks.all"
-# 	],
-# 	"daily": [
-# 		"frappe_vault.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"frappe_vault.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"frappe_vault.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"frappe_vault.tasks.monthly"
-# 	],
-# }
+scheduler_events = {"cron": {"39 * * * *": ["frappe_vault.vault_sync.reconcile_all"]}}
 
 # Testing
 # -------
 
 # before_tests = "frappe_vault.install.before_tests"
+
+# Fixtures
+# --------
+
 
 # Overriding Methods
 # ------------------------------
@@ -186,7 +204,6 @@ after_install = "frappe_vault.install.after_install"
 
 # Request Events
 # ----------------
-# before_request = ["frappe_vault.utils.before_request"]
 # after_request = ["frappe_vault.utils.after_request"]
 
 # Job Events

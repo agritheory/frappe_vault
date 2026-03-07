@@ -17,6 +17,8 @@
     "monitor": 1,
     "server_script_enabled": true,
     "enable_vault_secrets": true,
+    "vault_secrets_api_enabled": true,
+    "vault_proxy_enabled": true,
     "vault_url": "http://localhost:8200",
     "vault_token": "test-token",
     "vault_verify_ssl": false

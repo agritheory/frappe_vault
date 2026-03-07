@@ -66,6 +66,8 @@ def patched_get_decrypted_password(
 	"""
 	Vault-aware replacement for frappe.utils.password.get_decrypted_password.
 
+	APP: frappe_vault HASH: 59a92b53ac456f5dce802cee7f261d03c2a05df0 REPO: https://github.com/frappe/frappe PATH: frappe/utils/password.py METHOD: get_decrypted_password
+
 	If Vault is enabled and the field is vault-enabled, fetch from Vault.
 	Otherwise, use the original Frappe password storage.
 
@@ -120,7 +122,10 @@ def patched_set_encrypted_password(
 	"""
 	Vault-aware replacement for frappe.utils.password.set_encrypted_password.
 
-	If Vault is enabled and the field is vault-enabled, store in Vault.
+	APP: frappe_vault HASH: 59a92b53ac456f5dce802cee7f261d03c2a05df0 REPO: https://github.com/frappe/frappe PATH: frappe/utils/password.py METHOD: set_encrypted_password
+
+	If Vault is enabled and the field is vault-enabled, store in Vault and
+	propagate to remotes via sync_write when replication is enabled.
 	Otherwise, use the original Frappe password storage.
 
 	Args:
@@ -136,8 +141,9 @@ def patched_set_encrypted_password(
 		return _original_set_encrypted_password(doctype, name, pwd, fieldname)
 
 	try:
-		client = get_vault_client()
-		client.set_secret(doctype, name, fieldname, pwd)
+		from frappe_vault.vault_sync import sync_write
+
+		sync_write(doctype, name, fieldname, pwd)
 
 	except VaultError as e:
 		frappe.log_error(
@@ -159,11 +165,11 @@ def patched_delete_password(doctype: str, name: str, fieldname: str = "password"
 	    name: Document name
 	    fieldname: Password field name
 	"""
-	# Always try to delete from Vault if enabled
 	if is_field_vault_enabled(doctype, fieldname):
 		try:
-			client = get_vault_client()
-			client.delete_secret(doctype, name, fieldname)
+			from frappe_vault.vault_sync import sync_delete
+
+			sync_delete(doctype, name, fieldname)
 		except VaultError as e:
 			frappe.log_error(
 				title="Vault Error",
@@ -194,7 +200,10 @@ def patched_update_password(
 	"""
 	Vault-aware replacement for frappe.utils.password.update_password.
 
-	If Vault user passwords are enabled, store the hashed password in Vault.
+	APP: frappe_vault HASH: 59a92b53ac456f5dce802cee7f261d03c2a05df0 REPO: https://github.com/frappe/frappe PATH: frappe/utils/password.py METHOD: update_password
+
+	If Vault user passwords are enabled, store the hashed password in Vault and
+	propagate to remotes via sync_write when replication is enabled.
 	Otherwise, use the original Frappe password storage.
 
 	Args:
@@ -208,12 +217,11 @@ def patched_update_password(
 		return _original_update_password(user, pwd, doctype, fieldname, logout_all_sessions)
 
 	try:
-		# Hash the password the same way Frappe does
 		hashed_pwd = passlibctx.hash(pwd)
 
-		# Store hash in Vault
-		client = get_vault_client()
-		client.set_secret(doctype, user, fieldname, hashed_pwd)
+		from frappe_vault.vault_sync import sync_write
+
+		sync_write(doctype, user, fieldname, hashed_pwd)
 
 		# Remove any existing password from __Auth table (no plaintext/hash in DB)
 		frappe.db.delete(
@@ -225,7 +233,6 @@ def patched_update_password(
 			},
 		)
 
-		# Handle session logout if requested
 		if logout_all_sessions:
 			from frappe.sessions import clear_sessions
 
@@ -252,7 +259,10 @@ def patched_check_password(
 	"""
 	Vault-aware replacement for frappe.utils.password.check_password.
 
+	APP: frappe_vault HASH: 59a92b53ac456f5dce802cee7f261d03c2a05df0 REPO: https://github.com/frappe/frappe PATH: frappe/utils/password.py METHOD: check_password
+
 	If Vault user passwords are enabled, verify against the hash stored in Vault.
+	Reads always go to local Vault only — remotes are write targets, not read sources.
 	Otherwise, use the original Frappe password verification.
 
 	Args:
@@ -278,13 +288,11 @@ def patched_check_password(
 		if not stored_hash or not passlibctx.verify(pwd, stored_hash):
 			raise frappe.AuthenticationError(_("Incorrect User or Password"))
 
-		# Delete tracker cache if requested
 		if delete_tracker_cache:
 			from frappe.utils.password import delete_login_failed_cache
 
 			delete_login_failed_cache(user)
 
-		# Check if hash needs update (e.g., algorithm upgrade)
 		if passlibctx.needs_update(stored_hash):
 			patched_update_password(user, pwd, doctype, fieldname)
 
