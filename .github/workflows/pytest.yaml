@@ -5,6 +5,7 @@ on:
     branches:
       - version-15
       - version-16
+      - version-16
   pull_request:
 
 concurrency:
@@ -63,7 +64,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: Check for valid Python & Merge Conflicts
         run: |
