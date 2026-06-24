@@ -5,16 +5,13 @@ on:
     branches:
       - version-15
       - version-16
-      - version-16
-      - version-16
   pull_request:
     branches:
       - version-15
       - version-16
-      - version-16
-      - version-16
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
