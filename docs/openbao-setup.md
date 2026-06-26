@@ -95,7 +95,7 @@ On first start, OpenBao will automatically:
 
 To start fresh (deletes all secrets):
 ```shell
-bench remove-openbao --confirm
+bench setup-openbao --reset
 bench setup-openbao
 bench start
 ```
@@ -119,7 +119,7 @@ OpenBao v2.4+ supports **static seal auto-unseal**, which allows OpenBao to auto
 The easiest way to set up OpenBao is to use the Frappe Vault CLI, which creates all configuration files in your bench's `config/` directory:
 
 ```shell
-bench generate-seal-key --init-config
+bench generate-seal-key
 ```
 
 This creates:
