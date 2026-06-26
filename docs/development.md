@@ -72,9 +72,8 @@ wget https://github.com/openbao/openbao/releases/download/v${VERSION}/bao-hsm_${
 sudo dpkg -i bao-hsm_${VERSION}_linux_amd64.deb
 ```
 
-8. **Set up OpenBao** (installs the app first if not done above):
+8. **Set up OpenBao**:
 ```shell
-bench --site {{ site name }} install-app frappe_vault
 bench setup-openbao
 ```
 
