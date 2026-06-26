@@ -189,8 +189,19 @@ vault_pw = client.get_secret("User", "Administrator", "password")
 print("In OpenBao:", "Yes (hash starts with $)" if vault_pw else "No")
 
 # Test login works
-frappe.auth.LoginManager().authenticate("Administrator", "testpass123")
-print("Login successful!")
+import frappe.auth
+frappe.local.request = frappe._dict(
+    path="/", scheme="http",
+    cookies=frappe._dict(),
+    headers=frappe._dict(),
+)
+frappe.local.request_ip = "127.0.0.1"
+frappe.local.cookie_manager = frappe.auth.CookieManager()
+frappe.local.form_dict = frappe._dict()
+
+lm = frappe.auth.LoginManager()
+lm.authenticate("Administrator", "Diamo2727")
+print(f"Authenticated as: {lm.user}")
 ```
 
 ### Test 3: Proxy API (Method Endpoints)
