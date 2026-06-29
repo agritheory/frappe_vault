@@ -34,6 +34,7 @@ This integration is designed to meet compliance requirements for DCAA, CMMC, HIP
 
 - [Developer Environment Setup](./development.md)
 - [Production Environment Setup](./production.md)
+- [Frappe Cloud Deployment](./frappe-cloud.md)
 - [Site Configuration](./configuration.md)
 - [OpenBao Setup Guide](./openbao-setup.md)
 
