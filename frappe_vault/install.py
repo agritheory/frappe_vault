@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.error
 import urllib.request
@@ -21,11 +22,31 @@ def is_root():
 	return os.geteuid() == 0
 
 
+def can_install_openbao_locally():
+	"""Return True only when this environment can realistically install OpenBao.
+
+	Frappe Cloud and other containerised platforms run as an unprivileged user
+	without sudo, apt, or write access to system directories. In those cases we
+	skip the local install and expect an external OpenBao instance to be
+	configured via site_config (vault_url / vault_token) or env vars.
+	"""
+	if platform != "linux":
+		return False
+	if is_root():
+		return True
+	if not sys.stdin.isatty():
+		return False
+	return test_sudo()
+
+
 def test_sudo():
 	args = "sudo -S echo OK".split()
-	kwargs = dict(stdout=subprocess.PIPE, encoding="utf-8")
-	cmd = subprocess.run(args, **kwargs)
-	return "OK" in cmd.stdout
+	kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+	try:
+		cmd = subprocess.run(args, **kwargs)
+		return "OK" in (cmd.stdout or "")
+	except (FileNotFoundError, OSError):
+		return False
 
 
 def install_package(module, pwd=""):
@@ -72,13 +93,17 @@ def install_openbao():
 		print("OpenBao is already installed.")
 		return
 
-	if platform != "linux":
-		print("You need to manually install OpenBao.\n" "Visit: https://openbao.org/docs/install")
+	if not can_install_openbao_locally():
+		print(
+			"Cannot install OpenBao locally (no root/sudo or non-interactive environment). "
+			"If you are on Frappe Cloud, configure an external OpenBao instance via "
+			"site_config.json (vault_url / vault_token) or environment variables "
+			"(BAO_ADDR / BAO_TOKEN)."
+		)
 		return
 
-	has_sudo_permissions = is_root() or test_sudo()
 	pwd = ""
-	if not has_sudo_permissions:
+	if not is_root():
 		pwd = getpass("Provide sudo password to install OpenBao: ")
 
 	# --- Try apt first ---------------------------------------------------
@@ -198,6 +223,14 @@ def get_user_confirmation():
 
 def check_openbao_supervisor_config():
 	"""Check if OpenBao is configured in supervisor and prompt for setup if needed."""
+	# Skip supervisor setup when we don't have privileges (e.g. Frappe Cloud).
+	if not (is_root() or test_sudo()):
+		print(
+			"No root/sudo access; skipping supervisor configuration. "
+			"On Frappe Cloud you must run OpenBao externally."
+		)
+		return
+
 	# Skip supervisor setup on development setups
 	if not (frappe.conf.restart_supervisor_on_update or frappe.conf.restart_systemd_on_update):
 		print(
@@ -267,8 +300,15 @@ check_vault_supervisor_config = check_openbao_supervisor_config
 
 def before_install():
 	"""Run before app installation."""
-	install_openbao()
-	check_openbao_supervisor_config()
+	try:
+		install_openbao()
+	except Exception as e:
+		print(f"Warning: OpenBao installation step failed: {e}")
+
+	try:
+		check_openbao_supervisor_config()
+	except Exception as e:
+		print(f"Warning: Supervisor configuration step failed: {e}")
 
 
 def after_install():
