@@ -4,7 +4,7 @@ For license information, please see license.txt-->
 # Frappe Cloud Deployment
 
 <div class="byline">
-  Tyler Matteson 2026-06-29
+  Francisco Roldan 2026-06-29
 </div>
 
 Frappe Cloud runs benches inside containers as an unprivileged user. The bench cannot install system packages, write to `/usr/local/bin`, or modify Supervisor configuration. Therefore **Frappe Vault cannot install or run OpenBao inside the Frappe Cloud bench**; you must provide an external OpenBao instance and point Frappe Vault at it.
