@@ -24,6 +24,10 @@ def get_logger(*args, **kwargs):
 	)
 
 
+# Patch before test modules import frappe submodules (e.g. File → pdf → cssutils logger).
+frappe.logger = get_logger
+
+
 @pytest.fixture(scope="module")
 def monkeymodule():
 	with pytest.MonkeyPatch.context() as mp:
@@ -32,8 +36,6 @@ def monkeymodule():
 
 @pytest.fixture(scope="session", autouse=True)
 def db_instance():
-	frappe.logger = get_logger
-
 	sites = Path(get_bench_path()) / "sites"
 	currentsite = "test_site"
 	if (sites / "currentsite.txt").is_file():

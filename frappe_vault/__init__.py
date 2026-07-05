@@ -20,11 +20,15 @@ original_check_password = frappe.utils.password.check_password
 
 
 def is_vault_enabled() -> bool:
+	if "frappe_vault" not in frappe.conf.installed_apps:
+		return False
 	"""Check if Vault secrets are enabled in site config (for encrypted Password fields)."""
 	return bool(frappe.conf.get("vault_password_fields_enabled"))
 
 
 def is_vault_user_passwords_enabled() -> bool:
+	if "frappe_vault" not in frappe.conf.installed_apps:
+		return False
 	"""Check if Vault is enabled for user login passwords (hashed passwords)."""
 	return bool(frappe.conf.get("enable_vault_user_passwords"))
 
