@@ -78,6 +78,8 @@ auth_hooks = ["frappe_vault.vault_api_renderer.authenticate_vault_token"]
 before_install = "frappe_vault.install.before_install"
 after_install = "frappe_vault.install.after_install"
 
+debian_packages = ["wget", "gpg", "lsb-release"]
+
 # Uninstallation
 # ------------
 
