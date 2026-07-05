@@ -13,14 +13,14 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    concurrency: release
+    concurrency: release-${{ github.ref }}
     permissions:
       id-token: write
       contents: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Python Semantic Release

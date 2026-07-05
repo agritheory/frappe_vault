@@ -1,6 +1,6 @@
 [project]
 name = "frappe_vault"
-version = "15.3.1"
+version = "16.0.0"
 description = "OpenBao integration for Frappe"
 requires-python = ">=3.14,<3.15"
 readme = "README.md"
@@ -45,5 +45,8 @@ types-requests = "~=2.31.0"
 [tool.pytest.ini_options]
 addopts = "-s --disable-warnings"
 
-[tool.semantic_release.branches.version]
+[tool.semantic_release.branches.version-15]
 match = "version-15"
+
+[tool.semantic_release.branches.version-16]
+match = "version-16"
