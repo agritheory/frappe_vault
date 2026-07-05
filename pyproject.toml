@@ -45,8 +45,8 @@ types-requests = "~=2.31.0"
 [tool.pytest.ini_options]
 addopts = "-s --disable-warnings"
 
-[tool.semantic_release.branches.version-15]
-match = "version-15"
-
 [tool.semantic_release.branches.version-16]
-match = "version-16"
+match = "^version-16$"
+
+[tool.semantic_release.branches.version-15]
+match = "^version-15$"
