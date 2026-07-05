@@ -29,80 +29,15 @@ from frappe_vault.vault_client import get_vault_client
 # ---------------------------------------------------------------------------
 
 
+from frappe_vault.openbao_binary import ensure_bao_binary as ensure_bao_binary_impl
+
+
 def ensure_bao_binary() -> str:
 	"""Return the path to the bao binary, downloading it from GitHub if absent."""
-	bao = shutil.which("bao")
-	if not bao:
-		for candidate in ("/usr/local/bin/bao", "/usr/bin/bao", "/opt/openbao/bin/bao"):
-			if os.path.isfile(candidate):
-				bao = candidate
-				break
-
-	if bao:
-		return bao
-
-	# Not found anywhere — download the pre-built binary from GitHub releases.
-	click.echo("'bao' not found. Downloading OpenBao from GitHub releases...")
-	try:
-		req = urllib.request.Request(
-			"https://api.github.com/repos/openbao/openbao/releases/latest",
-			headers={"Accept": "application/vnd.github+json"},
-		)
-		with urllib.request.urlopen(req, timeout=15) as r:
-			release = json.loads(r.read())
-
-		tag = release["tag_name"]
-		version = tag.lstrip("v")
-
-		# Linux releases ship as .tar.gz (not .zip — that's Windows only).
-		# The filename uses a capitalised OS name, e.g. bao_2.5.1_Linux_x86_64.tar.gz.
-		# Exclude the HSM variant (bao-hsm_*).
-		tar_url = None
-		tar_name = None
-		for asset in release.get("assets", []):
-			name = asset["name"]
-			name_lower = name.lower()
-			if (
-				name_lower.endswith(".tar.gz")
-				and name_lower.startswith("bao_")
-				and "linux" in name_lower
-				and ("x86_64" in name_lower or "amd64" in name_lower)
-			):
-				tar_url = asset["browser_download_url"]
-				tar_name = name
-				break
-
-		if not tar_url:
-			asset_names = [a["name"] for a in release.get("assets", [])]
-			raise RuntimeError(f"No Linux x86_64 tar.gz asset in release {tag}. Available: {asset_names}")
-
-		click.echo(f"Downloading {tar_name} ...")
-		tar_path = f"/tmp/bao_{version}.tar.gz"
-		urllib.request.urlretrieve(tar_url, tar_path)
-
-		extract_dir = f"/tmp/bao_{version}_extract"
-		os.makedirs(extract_dir, exist_ok=True)
-		with tarfile.open(tar_path, "r:gz") as tf:
-			# Find the bao binary inside the archive
-			binary_member = next(
-				(m for m in tf.getmembers() if m.name in ("bao", "./bao") or m.name.endswith("/bao")),
-				None,
-			)
-			if not binary_member:
-				raise RuntimeError(f"No bao binary in tarball. Contents: {[m.name for m in tf.getmembers()]}")
-			binary_member.name = os.path.basename(binary_member.name)
-			tf.extract(binary_member, extract_dir)
-
-		dest = "/usr/local/bin/bao"
-		subprocess.run(["sudo", "mv", os.path.join(extract_dir, "bao"), dest], check=True)
-		subprocess.run(["sudo", "chmod", "+x", dest], check=True)
-		click.echo(f"OpenBao {version} installed to {dest}.")
-		return dest
-
-	except Exception as e:
-		click.echo(f"Error: could not install OpenBao automatically: {e}", err=True)
-		click.echo("Install manually: https://openbao.org/docs/install", err=True)
+	result = ensure_bao_binary_impl(required=True)
+	if not result:
 		raise SystemExit(1)
+	return result
 
 
 def reset_openbao_config(bench_path: str) -> None:

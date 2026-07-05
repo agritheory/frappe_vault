@@ -1,180 +1,15 @@
 # Copyright (c) 2025, AgriTheory and contributors
 # For license information, please see license.txt
 
-import json
 import os
-import shutil
 import subprocess
-import tarfile
-import urllib.error
-import urllib.request
 from datetime import datetime
-from getpass import getpass
-from sys import platform
 
 import frappe
 
+from frappe_vault.openbao_binary import check_openbao_installed, ensure_bao_binary
+from frappe_vault.system_packages import ensure_debian_packages, is_noninteractive
 from frappe_vault.vault_client import VaultError, get_vault_client
-
-
-def is_root():
-	return os.geteuid() == 0
-
-
-def test_sudo():
-	args = "sudo -S echo OK".split()
-	kwargs = dict(stdout=subprocess.PIPE, encoding="utf-8")
-	cmd = subprocess.run(args, **kwargs)
-	return "OK" in cmd.stdout
-
-
-def install_package(module, pwd=""):
-	args = f"sudo -S apt-get -y install {module}".split()
-	kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
-	if pwd:
-		kwargs.update(input=pwd)
-	cmd = subprocess.run(args, **kwargs)
-	return cmd.stdout, cmd.stderr
-
-
-def check_openbao_installed():
-	"""Check if bao command is available OR OpenBao server is reachable via HTTP.
-
-	The HTTP check covers CI environments where OpenBao runs as a Docker
-	service on localhost but the bao binary is not installed.
-	"""
-	if shutil.which("bao") is not None:
-		return True
-	try:
-		vault_url = frappe.conf.get("vault_url", "http://localhost:8200")
-		try:
-			with urllib.request.urlopen(f"{vault_url}/v1/sys/health", timeout=2) as r:
-				return r.status in (200, 429, 472, 473, 501, 503)
-		except urllib.error.HTTPError as e:
-			# urllib raises HTTPError for non-2xx — 501 (not initialized) and
-			# 503 (sealed) both mean OpenBao is running.
-			return e.code in (200, 429, 472, 473, 501, 503)
-	except Exception:
-		return False
-
-
-def install_openbao():
-	"""Install OpenBao if not present.
-
-	OpenBao is an open-source fork of HashiCorp Vault (MPL-2.0 licensed)
-	governed by the Open Source Security Foundation (OpenSSF).
-	See: https://openbao.org
-
-	Tries apt first (if the repo is reachable), then falls back to downloading
-	the binary directly from GitHub releases.
-	"""
-	if check_openbao_installed():
-		print("OpenBao is already installed.")
-		return
-
-	if platform != "linux":
-		print("You need to manually install OpenBao.\n" "Visit: https://openbao.org/docs/install")
-		return
-
-	has_sudo_permissions = is_root() or test_sudo()
-	pwd = ""
-	if not has_sudo_permissions:
-		pwd = getpass("Provide sudo password to install OpenBao: ")
-
-	# --- Try apt first ---------------------------------------------------
-	apt_ok = False
-	try:
-		print("Trying apt install...")
-		commands = [
-			"sudo -S apt-get update",
-			"sudo -S apt-get install -y gpg coreutils wget",
-			"wget -O- https://apt.releases.openbao.org/gpg | sudo gpg --dearmor -o /usr/share/keyrings/openbao-archive-keyring.gpg",
-			'echo "deb [signed-by=/usr/share/keyrings/openbao-archive-keyring.gpg] https://apt.releases.openbao.org $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/openbao.list',
-			"sudo -S apt-get update",
-		]
-		for cmd in commands:
-			kwargs = dict(
-				shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8"
-			)
-			if pwd:
-				kwargs.update(input=pwd)
-			result = subprocess.run(cmd, **kwargs)
-			if result.returncode != 0 and "already exists" not in result.stderr:
-				print(f"Warning: {result.stderr}")
-				break
-		else:
-			out, err = install_package("openbao", pwd)
-			if err and "already" not in err.lower():
-				print(f"apt install error: {err}")
-			apt_ok = check_openbao_installed()
-	except Exception as e:
-		print(f"apt install failed: {e}")
-
-	if apt_ok:
-		print("OpenBao installed successfully via apt.")
-		return
-
-	# --- Fall back to GitHub binary download ----------------------------
-	print("apt unavailable; downloading OpenBao binary from GitHub releases...")
-	try:
-		req = urllib.request.Request(
-			"https://api.github.com/repos/openbao/openbao/releases/latest",
-			headers={"Accept": "application/vnd.github+json"},
-		)
-		with urllib.request.urlopen(req, timeout=10) as r:
-			release = json.loads(r.read())
-		tag = release["tag_name"]
-		version = tag.lstrip("v")
-
-		tar_url = None
-		tar_name = None
-		for asset in release.get("assets", []):
-			name = asset["name"]
-			name_lower = name.lower()
-			if (
-				name_lower.endswith(".tar.gz")
-				and name_lower.startswith("bao_")
-				and "linux" in name_lower
-				and ("x86_64" in name_lower or "amd64" in name_lower)
-			):
-				tar_url = asset["browser_download_url"]
-				tar_name = name
-				break
-
-		if not tar_url:
-			raise RuntimeError(
-				f"No Linux x86_64 tar.gz asset in release {tag}. "
-				f"Available: {[a['name'] for a in release.get('assets', [])]}"
-			)
-
-		print(f"Downloading {tar_name} ...")
-		tar_path = f"/tmp/bao_{version}.tar.gz"
-		urllib.request.urlretrieve(tar_url, tar_path)
-
-		extract_dir = f"/tmp/bao_{version}_extract"
-		os.makedirs(extract_dir, exist_ok=True)
-		with tarfile.open(tar_path, "r:gz") as tf:
-			binary_member = next(
-				(m for m in tf.getmembers() if m.name in ("bao", "./bao") or m.name.endswith("/bao")),
-				None,
-			)
-			if not binary_member:
-				raise RuntimeError(f"No bao binary in tarball. Contents: {[m.name for m in tf.getmembers()]}")
-			binary_member.name = os.path.basename(binary_member.name)
-			tf.extract(binary_member, extract_dir)
-
-		dest = "/usr/local/bin/bao"
-		subprocess.run(["sudo", "mv", os.path.join(extract_dir, "bao"), dest], check=True)
-		subprocess.run(["sudo", "chmod", "+x", dest], check=True)
-
-		if check_openbao_installed():
-			print(f"OpenBao {version} installed to {dest}.")
-		else:
-			print("Download succeeded but 'bao' still not found — check PATH.")
-
-	except Exception as e:
-		print(f"GitHub download failed: {e}")
-		print("Please install OpenBao manually: https://openbao.org/docs/install")
 
 
 def get_user_confirmation():
@@ -261,13 +96,20 @@ def check_openbao_supervisor_config():
 
 # Backward compatibility aliases
 check_vault_installed = check_openbao_installed
-install_vault = install_openbao
+install_vault = ensure_bao_binary
 check_vault_supervisor_config = check_openbao_supervisor_config
 
 
 def before_install():
 	"""Run before app installation."""
-	install_openbao()
+	ensure_debian_packages(["wget", "gpg", "lsb-release"], required=False)
+	if not check_openbao_installed():
+		ensure_bao_binary(required=not is_noninteractive())
+
+	if is_noninteractive():
+		print("Non-interactive install: run 'bench setup-openbao' after install-app completes.")
+		return
+
 	check_openbao_supervisor_config()
 
 
