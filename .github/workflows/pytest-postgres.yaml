@@ -1,0 +1,143 @@
+name: Frappe CI
+
+on:
+  push:
+    branches:
+      - version-15
+      - version-16
+  pull_request:
+
+concurrency:
+  group: version-15-frappe_vault-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  checks: write
+  issues: write
+  pull-requests: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  tests:
+    name: Server (Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CI: 'true'
+    strategy:
+      fail-fast: false
+
+    services:
+      postgres:
+        image: postgres:18.0
+        env:
+          POSTGRES_PASSWORD: travis
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 3
+
+
+      openbao:
+        image: quay.io/openbao/openbao:latest
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: 'test-token'
+          BAO_DEV_LISTEN_ADDRESS: '0.0.0.0:8200'
+        ports:
+          - 8200:8200
+        options: --cap-add=IPC_LOCK
+
+      # Secondary OpenBao instance for vault_sync replication tests.
+      # Uses the same dev token for simplicity; production remotes use separate tokens.
+      openbao-secondary:
+        image: quay.io/openbao/openbao:latest
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: 'test-token'
+          BAO_DEV_LISTEN_ADDRESS: '0.0.0.0:8201'
+        ports:
+          - 8201:8201
+        options: --cap-add=IPC_LOCK
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Check for valid Python & Merge Conflicts
+        run: |
+          python -m compileall -q -f "${GITHUB_WORKSPACE}"
+          if grep -lr --exclude-dir=node_modules "^<<<<<<< " "${GITHUB_WORKSPACE}"
+              then echo "Found merge conflicts"
+              exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          check-latest: true
+
+      - name: Enable Corepack (for yarn)
+        run: corepack enable
+
+      - name: Add to Hosts
+        run: echo "127.0.0.1 test_site" | sudo tee -a /etc/hosts
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            ${{ runner.os }}-
+
+      - name: Cache yarn
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/yarn
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Install
+        run: |
+          bash ${GITHUB_WORKSPACE}/.github/helper/install.sh
+        env:
+          CI: 'Yes'
+          BAO_ADDR: 'http://localhost:8200'
+          BAO_TOKEN: 'test-token'
+
+      - name: Install Test Fixtures
+        working-directory: /home/runner/frappe-bench
+        run: |
+          bench execute 'frappe_vault.tests.setup.before_test'
+
+      - name: Run Tests
+        working-directory: /home/runner/frappe-bench
+        run: |
+          source env/bin/activate
+          cd apps/frappe_vault
+          pytest --cov=frappe_vault --cov-report=xml --disable-warnings -s | tee pytest-coverage.txt
+        env:
+          TYPE: server
+          BAO_ADDR: 'http://localhost:8200'
+          BAO_TOKEN: 'test-token'
+          BAO_ADDR_SECONDARY: 'http://localhost:8201'
+          BAO_TOKEN_SECONDARY: 'test-token'
+
+      - name: Pytest coverage comment
+        uses: MishaKav/pytest-coverage-comment@main
+        with:
+          pytest-coverage-path: /home/runner/frappe-bench/apps/frappe_vault/pytest-coverage.txt
+          pytest-xml-coverage-path: /home/runner/frappe-bench/apps/frappe_vault/coverage.xml
