@@ -2,6 +2,8 @@
 
 set -e
 
+DB="${DB:-mariadb}"
+
 # Suppress pip root user warning and set CI mode
 export PIP_ROOT_USER_ACTION=ignore
 export CI=Yes
@@ -25,7 +27,15 @@ mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "FLUSH PRIVILEGES"
 bench init --skip-assets --python "$(which python)" --frappe-branch version-15 frappe-bench --ignore-exist
 
 mkdir -p ~/frappe-bench/sites/test_site
-cp -r "${GITHUB_WORKSPACE}/.github/helper/site_config.json" ~/frappe-bench/sites/test_site/
+if [ "$DB" == "postgres" ]; then
+  cp "${GITHUB_WORKSPACE}/.github/helper/site_config_postgres.json" ~/frappe-bench/sites/test_site/site_config.json
+  echo "travis" | psql -h 127.0.0.1 -p 5432 -c "CREATE DATABASE test_site" -U postgres
+  echo "travis" | psql -h 127.0.0.1 -p 5432 -c "CREATE USER test_site WITH PASSWORD 'test_site'" -U postgres
+  echo "travis" | psql -h 127.0.0.1 -p 5432 -c "GRANT ALL PRIVILEGES ON DATABASE test_site TO test_site" -U postgres
+else
+  cp "${GITHUB_WORKSPACE}/.github/helper/site_config.json" ~/frappe-bench/sites/test_site/site_config.json
+fi
+
 
 install_whktml() {
     wget -O /tmp/wkhtmltox.tar.xz https://github.com/frappe/wkhtmltopdf/raw/master/wkhtmltox-0.12.3_linux-generic-amd64.tar.xz
