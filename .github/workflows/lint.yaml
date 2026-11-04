@@ -89,7 +89,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
 
       - name: Run Prettier
         run: npx --yes prettier@3.1.0 --check --config ./.prettierrc.cjs --ignore-path ./.prettierignore "**/*.js"
