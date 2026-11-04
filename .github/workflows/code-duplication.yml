@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   duplication:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,7 +21,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '18'
 
       - uses: agritheory/test_utils/actions/code_duplication@main
         with:
