@@ -19,7 +19,7 @@ permissions:
 jobs:
   tests:
     name: Server
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       CI: 'true'
@@ -28,7 +28,7 @@ jobs:
 
     services:
       mariadb:
-        image: mariadb:10.6
+        image: mariadb:10.6.24
         env:
           MARIADB_ROOT_PASSWORD: 'root'
         ports:
@@ -75,7 +75,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 18
           check-latest: true
 
       - name: Enable Corepack (for yarn)
